@@ -13,7 +13,8 @@ members = [
   "identity_stronghold",
   "identity_jose",
   "identity_eddsa_verifier",
-  "examples",
+  "examples", 
+  "identity_storage_tpm",
 ]
 
 exclude = ["bindings/wasm"]
