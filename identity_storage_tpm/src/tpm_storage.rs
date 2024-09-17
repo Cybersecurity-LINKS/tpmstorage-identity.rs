@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use identity_jose::jws::JwsAlgorithm;
 use identity_storage::{KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
-use tss_esapi::{constants::StartupType, handles::TpmHandle, structures::CapabilityData, tcti_ldr::NetworkTPMConfig, Context, Tcti};
+use tss_esapi::{abstraction::public, attributes::ObjectAttributes, constants::{SessionType, StartupType}, handles::{KeyHandle, ObjectHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, resource_handles::Hierarchy, session_handles::AuthSession}, structures::{CapabilityData, CreatePrimaryKeyResult, Digest, KeyedHashScheme, PublicBuilder, PublicKeyedHashParameters, SymmetricDefinition}, tcti_ldr::NetworkTPMConfig, Context, Tcti};
 use anyhow::{anyhow, Result};
 
 /// Supported key types for TPM Storage
@@ -33,9 +33,10 @@ impl TryFrom<&KeyType> for TpmKeyType{
 
 /// Storage implementation that uses the TPM for securely storing JWKs.
 pub struct TpmStorage{
-    ctx: Arc<Mutex<Context>>
+    pub (crate) ctx: Arc<Mutex<Context>>,
+    pub (crate) primary: Arc<KeyHandle>,
+    pub (crate) session: Arc<Option<AuthSession>>
 }
-
 
 const HANDLE_STORAGE_FIRST_INDEX:u32 = 0x81008000;
 const HANDLE_STORAGE_LAST_INDEX:u32 = 0x8100FFFF;
@@ -44,9 +45,35 @@ impl TpmStorage {
         let location = Tcti::Mssim(NetworkTPMConfig::default()); //TODO: rimuovere
         let mut ctx = Context::new(location)?;
         let _ =ctx.startup(StartupType::Clear)?; // TODO: rimuovere
-        Ok(TpmStorage{ctx: Arc::new(Mutex::new(ctx))})
+        // Generate an Auth Session for TPM communication.
+        let auth_session = ctx.start_auth_session(None, None, None, 
+            SessionType::Hmac,
+            SymmetricDefinition::AES_128_CFB,
+            HashingAlgorithm::Sha256)?;
+
+        let storage_primary = ctx.execute_with_session(auth_session, |context| {
+            let object_attributes = ObjectAttributes::builder()
+                .with_fixed_parent(true)
+                .with_fixed_tpm(true)
+                .with_restricted(true)
+                .with_user_with_auth(true)
+                .with_sensitive_data_origin(true)
+                .with_sign_encrypt(true)
+                .build()?;
+
+            let public = PublicBuilder::new()
+                .with_public_algorithm(PublicAlgorithm::KeyedHash)
+                .with_keyed_hash_parameters(PublicKeyedHashParameters::new(KeyedHashScheme::HMAC_SHA_256))
+                .with_keyed_hash_unique_identifier(Digest::default())
+                .with_object_attributes(object_attributes)
+                .with_name_hashing_algorithm(HashingAlgorithm::Sha256)
+                .build()?;
+            context.create_primary(Hierarchy::Owner, public, None, None, None, None)
+        })?;
+
+        Ok(TpmStorage{ctx: Arc::new(Mutex::new(ctx)), primary: Arc::new(storage_primary.key_handle.clone()), session: Arc::new(auth_session)})
     }
-    
+
     fn match_kty_with_alg(key_type: &TpmKeyType, alg: &JwsAlgorithm) -> KeyStorageResult<()>{
         match (key_type, alg) {
             (TpmKeyType::P256, JwsAlgorithm::ES256) => Ok(()),
@@ -91,5 +118,6 @@ impl TpmStorage {
 
         Ok(free_handle)
     }
+
 
 }
