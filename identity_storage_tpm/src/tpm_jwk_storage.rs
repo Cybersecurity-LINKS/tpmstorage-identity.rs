@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
-use identity_storage::{JwkGenOutput, JwkStorage, KeyId, KeyStorageResult, KeyType};
+use identity_storage::{JwkGenOutput, JwkStorage, KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
+use tss_esapi::interface_types::algorithm::HashingAlgorithm;
 
-use crate::tpm_storage::TpmStorage;
+use crate::tpm_storage::{TpmKeyType, TpmStorage};
 
 #[async_trait(?Send)]
 impl JwkStorage for TpmStorage{
@@ -10,13 +11,45 @@ impl JwkStorage for TpmStorage{
     ///
     /// It is recommended that the implementer exposes constants for the supported [`KeyType`].
     async fn generate(&self, key_type: KeyType, alg: JwsAlgorithm) -> KeyStorageResult<JwkGenOutput>{
-        todo!()
+        
+        // parameters check
+        let key_type = TpmKeyType::try_from(&key_type)?;
+        TpmStorage::match_kty_with_alg(&key_type, &alg)?;
+
+        // Assign a new KeyId
+        let handle = self.get_free_handle()
+        .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unavailable)
+            .with_custom_message(e.to_string())})?;
+        
+        let kid: KeyId = KeyId::from(handle.clone());
+
+        // Generate a new key
+        let (key_obj, public) = self.create_signing_key(&key_type)
+        .map_err(|err| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message("Cannot create the key")})?;
+
+        // Store the Key
+        self.store_key(key_obj, handle)
+        .map_err(|e|{KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
+
+        // Create Jwk
+        let mut jwk = TpmStorage::encode_jwk(&key_type, public)?;
+        jwk.set_alg(alg.name());
+        jwk.set_kid(jwk.thumbprint_sha256_b64());
+        let public_jwk = jwk.to_public().expect("unexpected error during jwk generation");
+
+        Ok(JwkGenOutput::new(kid, public_jwk))
     }
+
     /// Insert an existing JSON Web Key into the storage.
     ///
     /// All private key components of the `jwk` must be set.
+    /// ### Warning
+    /// If called an Error is always returned.
+    /// This method cannot be used inside the TPM. 
+    /// Importing an external key inside the TPM is not supported.
     async fn insert(&self, jwk: Jwk) -> KeyStorageResult<KeyId>{
-        todo!()
+        Err(KeyStorageError::new(KeyStorageErrorKind::Unavailable)
+        .with_custom_message("Cannot store external keys inside the TPM device"))
     }
 
     /// Sign the provided `data` using the private key identified by `key_id` according to the requirements of
