@@ -3,7 +3,7 @@ use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{JwkGenOutput, JwkStorage, KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
 use tss_esapi::interface_types::algorithm::HashingAlgorithm;
 
-use crate::tpm_storage::{TpmKeyType, TpmStorage};
+use crate::tpm_storage::{TpmKeyId, TpmKeyType, TpmStorage};
 
 #[async_trait(?Send)]
 impl JwkStorage for TpmStorage{
@@ -20,16 +20,16 @@ impl JwkStorage for TpmStorage{
         let handle = self.get_free_handle()
         .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unavailable)
             .with_custom_message(e.to_string())})?;
-        
-        let kid: KeyId = KeyId::from(handle.clone());
 
         // Generate a new key
         let (key_obj, public) = self.create_signing_key(&key_type)
         .map_err(|err| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message("Cannot create the key")})?;
 
         // Store the Key
-        self.store_key(key_obj, handle)
+        let stored_ref = self.store_key(key_obj, handle)
         .map_err(|e|{KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
+        
+        let kid: KeyId = KeyId::from(stored_ref);
 
         // Create Jwk
         let mut jwk = TpmStorage::encode_jwk(&key_type, public)?;
@@ -61,7 +61,10 @@ impl JwkStorage for TpmStorage{
     /// corresponds to `key_id` and additional checks for this in the `sign` implementation are normally not required.
     /// This is however based on the expectation that the key material associated with a given [`KeyId`] is immutable.  
     async fn sign(&self, key_id: &KeyId, data: &[u8], public_key: &Jwk) -> KeyStorageResult<Vec<u8>>{
-        todo!()
+        let kid = TpmKeyId::try_from(key_id.as_str())
+            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
+        self.tpm_sign(&kid, data, public_key)
+        .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})
     }
 
     /// Deletes the key identified by `key_id`.
@@ -73,11 +76,46 @@ impl JwkStorage for TpmStorage{
     ///
     /// This operation cannot be undone. The keys are purged permanently.
     async fn delete(&self, key_id: &KeyId) -> KeyStorageResult<()>{
-        todo!()
+        let key_id = TpmKeyId::try_from(key_id.as_str())
+            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
+
+        self.delete_key(&key_id)
+            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::KeyNotFound)})
     }
 
     /// Returns `true` if the key with the given `key_id` exists in storage, `false` otherwise.
     async fn exists(&self, key_id: &KeyId) -> KeyStorageResult<bool>{
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests{
+    use identity_jose::jws::JwsAlgorithm;
+    use identity_storage::{JwkStorage, KeyType};
+
+    use crate::tpm_storage::{TpmKeyId, TpmStorage};
+
+    #[tokio::test]
+    async fn generate_and_delete_key() -> Result<(), anyhow::Error>{
+        let tpm = TpmStorage::new_test_instance()?;
+        let result = tpm.generate(KeyType::new("P-256"), JwsAlgorithm::ES256).await;
+        assert!(result.is_ok(), "{}", result.unwrap_err().to_string());
+        let result = result.unwrap();
+        println!("{:#?}", result);
+        let kid = TpmKeyId::try_from(result.key_id.as_str())?;
+        let delete_result = tpm.delete_key(&kid);
+        assert!(delete_result.is_ok(), "{}", delete_result.unwrap_err().to_string());
+        println!("Deleted!");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sign() -> Result<(), anyhow::Error>{
+        let tpm = TpmStorage::new_test_instance()?;
+        let result = tpm.generate(KeyType::new("P-256"), JwsAlgorithm::ES256).await?;
+        let signature = tpm.sign(&result.key_id, "some message to sign".as_bytes(), &result.jwk).await;
+        assert!(signature.is_ok(), "{}", signature.err().unwrap());
+        Ok(())
     }
 }
