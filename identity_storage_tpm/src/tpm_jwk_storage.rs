@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{JwkGenOutput, JwkStorage, KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
-use tss_esapi::interface_types::algorithm::HashingAlgorithm;
 
 use crate::tpm_storage::{TpmKeyId, TpmKeyType, TpmStorage};
 
@@ -12,7 +11,7 @@ impl JwkStorage for TpmStorage{
     /// It is recommended that the implementer exposes constants for the supported [`KeyType`].
     async fn generate(&self, key_type: KeyType, alg: JwsAlgorithm) -> KeyStorageResult<JwkGenOutput>{
         
-        // parameters check
+        // Parameters check
         let key_type = TpmKeyType::try_from(&key_type)?;
         TpmStorage::match_kty_with_alg(&key_type, &alg)?;
 
@@ -22,19 +21,19 @@ impl JwkStorage for TpmStorage{
             .with_custom_message(e.to_string())})?;
 
         // Generate a new key
-        let (key_obj, public) = self.create_signing_key(&key_type)
-        .map_err(|err| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message("Cannot create the key")})?;
+        let (key_obj, public, name) = self.create_signing_key(&key_type)
+        .map_err(|_| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message("Cannot create the key")})?;
 
         // Store the Key
         let stored_ref = self.store_key(key_obj, handle)
         .map_err(|e|{KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
         
         let kid: KeyId = KeyId::from(stored_ref);
-
+        
         // Create Jwk
         let mut jwk = TpmStorage::encode_jwk(&key_type, public)?;
         jwk.set_alg(alg.name());
-        jwk.set_kid(jwk.thumbprint_sha256_b64());
+        jwk.set_kid(name);
         let public_jwk = jwk.to_public().expect("unexpected error during jwk generation");
 
         Ok(JwkGenOutput::new(kid, public_jwk))
@@ -85,7 +84,11 @@ impl JwkStorage for TpmStorage{
 
     /// Returns `true` if the key with the given `key_id` exists in storage, `false` otherwise.
     async fn exists(&self, key_id: &KeyId) -> KeyStorageResult<bool>{
-        todo!()
+        let key_id = TpmKeyId::try_from(key_id.as_str())
+            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
+
+        self.contains(&key_id)
+            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::KeyNotFound).with_custom_message(e.to_string())})
     }
 }
 
@@ -94,7 +97,7 @@ mod tests{
     use identity_jose::jws::JwsAlgorithm;
     use identity_storage::{JwkStorage, KeyType};
 
-    use crate::tpm_storage::{TpmKeyId, TpmStorage};
+    use crate::tpm_storage::{tests::TPM, TpmKeyId, TpmStorage};
 
     #[tokio::test]
     async fn generate_and_delete_key() -> Result<(), anyhow::Error>{
@@ -104,7 +107,12 @@ mod tests{
         let result = result.unwrap();
         println!("{:#?}", result);
         let kid = TpmKeyId::try_from(result.key_id.as_str())?;
-        let delete_result = tpm.delete_key(&kid);
+
+        // if generated it must exists
+        assert!(tpm.contains(&kid)?);
+
+        // delete the key
+        let delete_result = TPM.delete_key(&kid);
         assert!(delete_result.is_ok(), "{}", delete_result.unwrap_err().to_string());
         println!("Deleted!");
         Ok(())
@@ -112,9 +120,8 @@ mod tests{
 
     #[tokio::test]
     async fn sign() -> Result<(), anyhow::Error>{
-        let tpm = TpmStorage::new_test_instance()?;
-        let result = tpm.generate(KeyType::new("P-256"), JwsAlgorithm::ES256).await?;
-        let signature = tpm.sign(&result.key_id, "some message to sign".as_bytes(), &result.jwk).await;
+        let result = TPM.generate(KeyType::new("P-256"), JwsAlgorithm::ES256).await?;
+        let signature = TPM.sign(&result.key_id, "some message to sign".as_bytes(), &result.jwk).await;
         assert!(signature.is_ok(), "{}", signature.err().unwrap());
         Ok(())
     }
