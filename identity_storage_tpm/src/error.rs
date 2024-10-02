@@ -1,5 +1,4 @@
-use crate::tpm_storage::TpmKeyId;
-
+use crate::tpm_key_id::TpmKeyId;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TpmStorageError{

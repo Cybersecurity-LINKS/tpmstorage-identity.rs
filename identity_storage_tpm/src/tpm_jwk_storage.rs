@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{JwkGenOutput, JwkStorage, KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
 
-use crate::tpm_storage::{TpmKeyId, TpmKeyType, TpmStorage};
+use crate::tpm_storage::{TpmKeyType, TpmStorage};
+use crate::tpm_key_id::TpmKeyId;
 
 #[async_trait(?Send)]
 impl JwkStorage for TpmStorage{
@@ -97,7 +98,8 @@ mod tests{
     use identity_jose::jws::JwsAlgorithm;
     use identity_storage::{JwkStorage, KeyType};
 
-    use crate::tpm_storage::{TpmKeyId, TpmStorage};
+    use crate::tpm_storage::TpmStorage;
+    use crate::tpm_key_id::TpmKeyId;
 
     #[tokio::test]
     async fn generate_and_delete_key() -> Result<(), anyhow::Error>{
