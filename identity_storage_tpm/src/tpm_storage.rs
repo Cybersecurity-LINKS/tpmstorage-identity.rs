@@ -1,8 +1,8 @@
-use std::{fmt::{format, Display}, io::Seek, ops::Deref, sync::{Arc, Mutex}};
+use std::{fmt::Display, ops::Deref, sync::{Arc, Mutex, MutexGuard}};
 
-use identity_jose::{jwk::{Jwk, JwkParamsEc}, jws::JwsAlgorithm, jwu::{self, encode_b64}};
+use identity_jose::{jwk::{Jwk, JwkParamsEc}, jws::JwsAlgorithm, jwu::{self}};
 use identity_storage::{KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
-use tss_esapi::{abstraction::public, attributes::ObjectAttributes, constants::SessionType, handles::{AuthHandle, KeyHandle, ObjectHandle, PersistentTpmHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm, SymmetricMode}, dynamic_handles::Persistent, ecc::EccCurve, key_bits::AesKeyBits, resource_handles::{Hierarchy, Provision}, session_handles::AuthSession}, structures::{CapabilityData, CreateKeyResult, Digest, EccPoint, EccScheme, HashScheme, HashcheckTicket, MaxBuffer, Name, Public, PublicBuilder, PublicEccParameters, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition, SymmetricDefinitionObject, Ticket}, tcti_ldr::DeviceConfig, traits::Marshall, tss2_esys::TPM2B_PUBLIC, utils::PublicKey, Context, Tcti};
+use tss_esapi::{attributes::ObjectAttributes, constants::SessionType, handles::{KeyHandle, ObjectHandle, PersistentTpmHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm, SymmetricMode}, dynamic_handles::Persistent, ecc::EccCurve, key_bits::AesKeyBits, resource_handles::{Hierarchy, Provision}, session_handles::AuthSession}, structures::{CapabilityData, EccPoint, EccScheme, HashScheme, MaxBuffer, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition, SymmetricDefinitionObject}, tcti_ldr::DeviceConfig, utils::PublicKey, Context, Tcti};
 use anyhow::{anyhow, Result};
 
 use crate::error::TpmStorageError;
@@ -101,6 +101,7 @@ impl Deref for TpmKeyId{
 }
 
 /// Storage implementation that uses the TPM for securely storing JWKs.
+#[derive(Debug)]
 pub struct TpmStorage{
     pub (crate) ctx: Arc<Mutex<Context>>,
     pub (crate) primary: Arc<KeyHandle>,
@@ -112,6 +113,7 @@ const HANDLE_STORAGE_LAST_INDEX:u32 = 0x8100FFFF;
 
 impl TpmStorage {
 
+    /// Initialization and first connection to the TPM device
     pub fn new() -> Result<TpmStorage>{
         let location = Tcti::Device(DeviceConfig::default());
         let mut ctx = Context::new(location)?;
@@ -158,7 +160,7 @@ impl TpmStorage {
     }
     
     /// List the persistent handles currently used
-    pub (crate) fn used_handles(ctx: &mut Context)-> Result<Vec<u32>>{
+    fn used_handles(ctx: &mut Context)-> Result<Vec<u32>>{
         //init loop for reading handles
         let mut more_data = true;
         let mut handles = vec![];
@@ -181,13 +183,16 @@ impl TpmStorage {
         Ok(handles)
     }
 
+    // This function aquires a lock on the function, than it releases the lock.
+    fn get_context(&self) -> Result<MutexGuard<Context>, TpmStorageError>{
+        self.ctx.lock()
+        .map_err(|_| {TpmStorageError::DeviceUnavailableError})
+    }
+
     /// This function returns an handle address that can be used for persistent storage in the Owner Hierarchy.
     /// The return value is the first empty handler starting from `HANDLE_STORAGE_FIRST_INDEX`
     pub (crate) fn get_free_handle(&self) -> Result<TpmKeyId>{
-        let mut ctx = match self.ctx.lock(){
-            Ok(ctx) => ctx,
-            Err(_) => return Err(anyhow!("Cannot retrieve the TPM device"))
-        };
+        let mut ctx = self.get_context()?;
         
         let used_handles = Self::used_handles(&mut ctx)?;
 
@@ -202,10 +207,7 @@ impl TpmStorage {
     }
 
     pub (crate) fn contains(&self, key_id: &TpmKeyId) -> Result<bool, TpmStorageError>{
-        let mut ctx = match self.ctx.lock(){
-            Ok(ctx) => ctx,
-            Err(_) => return Err(TpmStorageError::DeviceUnavailableError.into())
-        };
+        let mut ctx = self.get_context()?;
 
         let used_handles = Self::used_handles(&mut ctx)
             .map_err(|_|{TpmStorageError::UnexpectedBehaviour("cannot read used handles".to_owned())})?;
@@ -213,66 +215,64 @@ impl TpmStorage {
         Ok(used_handles.contains(&key_id))
     }
 
-    fn select_ecc_key_parameters(key_type: &TpmKeyType) -> Result<Public>{
+    fn select_ecc_key_parameters(key_type: &TpmKeyType) -> Result<Public, TpmStorageError>{
 
         let (crv, hashing) = match key_type {
-            TpmKeyType::P256 => (EccCurve::NistP256, HashingAlgorithm::Sha256),
-            _ => return Err(KeyStorageError::new(KeyStorageErrorKind::UnsupportedKeyType).into())
+            TpmKeyType::P256 => (EccCurve::NistP256, HashingAlgorithm::Sha256)
         };
 
         let attributes = ObjectAttributes::new_fixed_signing_key();
 
         let ecc_parameters = PublicEccParametersBuilder::new_unrestricted_signing_key(
             EccScheme::EcDsa(HashScheme::new(hashing)),
-            crv).build()?;
-        let public = PublicBuilder::new()
+            crv).build()
+            .map_err(|e| {TpmStorageError::KeyGenerationError(e.to_string())})?;
+        PublicBuilder::new()
         .with_ecc_parameters(ecc_parameters)
         .with_ecc_unique_identifier(EccPoint::default())
         .with_object_attributes(attributes)
         .with_name_hashing_algorithm(HashingAlgorithm::Sha256)
         .with_public_algorithm(PublicAlgorithm::Ecc)
-        .build()?;
-        
-        Ok(public)
+        .build()
+        .map_err(|e| {TpmStorageError::KeyGenerationError(e.to_string())})
     }
     
     /// Generate the correct [`Public`] structure starting from a [`TpmKeyType`]
-    fn select_key_parameters(key_type: &TpmKeyType) -> Result<Public>{
+    fn select_key_parameters(key_type: &TpmKeyType) -> Result<Public, TpmStorageError>{
         match key_type {
             TpmKeyType::P256 => Self::select_ecc_key_parameters(key_type),
-            _ => Err(KeyStorageError::new(KeyStorageErrorKind::UnsupportedKeyType).into())
         }
     }
     
     /// Create a key for signing operation protected in the TPM.
-    pub (crate) fn create_signing_key(&self, key_type: &TpmKeyType) -> Result<(ObjectHandle, PublicKey, TpmObjectName)>{
-        let mut ctx = match self.ctx.lock(){
-            Ok(ctx) => ctx,
-            Err(_) => return Err(TpmStorageError::DeviceUnavailableError.into())
-        };
+    pub (crate) fn create_signing_key(&self, key_type: &TpmKeyType) -> Result<(ObjectHandle, PublicKey, TpmObjectName), TpmStorageError>{
+        let mut ctx = self.get_context()?;
 
         let public = Self::select_key_parameters(key_type)?;
-        ctx.execute_with_session(*self.session, |ctx| {
+        ctx.execute_with_session(*self.session, |ctx| -> Result<(ObjectHandle, PublicKey, TpmObjectName)>{
             let key = ctx.create(*self.primary, public, None, None, None, None)?;
             let load = ctx.load(*self.primary, key.out_private, key.out_public.clone())?;
-            let name = encode_b64(Self::get_name(ctx, load.clone().into())?);
+
+            let name = Self::get_name(ctx, load.clone().into())?
+            .iter().map(|byte| {format!("{:X}", byte)}).collect();
+
             let public_key = PublicKey::try_from(key.out_public)?;
             Ok((load.into(), public_key, name))
         })
+        .map_err(|e|{TpmStorageError::KeyGenerationError(e.to_string())})
     }
 
     /// Add a TPM object in the persistent memory.
-    pub (crate) fn store_key(&self, tmp_handle: ObjectHandle ,storage_handle: TpmKeyId)-> Result<TpmKeyId>{
-        let mut ctx = match self.ctx.lock(){
-            Ok(ctx) => ctx,
-            Err(_) => return Err(TpmStorageError::DeviceUnavailableError.into())
-        };
+    pub (crate) fn store_key(&self, tmp_handle: ObjectHandle ,storage_handle: TpmKeyId)-> Result<TpmKeyId, TpmStorageError>{
+        let mut ctx = self.get_context()?;
 
-        let persistent_handle:PersistentTpmHandle = PersistentTpmHandle::new(*storage_handle)?;
+        let persistent_handle:PersistentTpmHandle = PersistentTpmHandle::new(*storage_handle)
+            .map_err(|_| {TpmStorageError::BadInput(storage_handle.to_string())})?;
         ctx.execute_with_session(*self.session, |context|{
             context.evict_control(Provision::Owner,
                 tmp_handle,
                 Persistent::Persistent(persistent_handle))
+                .map_err(|e|{TpmStorageError::KeyStorageError(e.to_string())})
         })?;
 
         Ok(storage_handle.into())
@@ -316,11 +316,6 @@ impl TpmStorage {
     }
 
     pub (crate) fn tpm_sign(&self, key_id: &TpmKeyId, data: &[u8],jwk: &Jwk) -> Result<Vec<u8>, TpmStorageError>{
-        let mut ctx = match self.ctx.lock(){
-            Ok(ctx) => ctx,
-            Err(_) => return Err(TpmStorageError::DeviceUnavailableError)
-        };
-
         let alg = jwk.alg().ok_or(TpmStorageError::BadInput(format!("jwk alg is None")))?;
         let scheme = Self::get_signature_scheme(alg)
             .map_err(|e| {TpmStorageError::BadInput(e.to_string())})?;
@@ -328,6 +323,8 @@ impl TpmStorage {
             .map_err(|e| {TpmStorageError::UnexpectedBehaviour(e.to_string())})?; // should not happen since this struct is setting the proper scheme
         let data = MaxBuffer::try_from(data)
             .map_err(|_| {TpmStorageError::BadInput("bad size of input data".to_owned())})?;
+
+        let mut ctx = self.get_context()?;
         let (hash, ticket) = ctx.hash(data, hashing_alg, Hierarchy::Owner)
         .map_err(|_| {TpmStorageError::UnexpectedBehaviour("unsupported hashing algorithm".to_owned())})?;
         let obj_handle = Self::get_tr_from_handle(&mut ctx, key_id)?;
@@ -340,10 +337,7 @@ impl TpmStorage {
     }
 
     pub (crate) fn delete_key(&self, key_id: &TpmKeyId)-> Result<(), TpmStorageError>{
-        let mut ctx = match self.ctx.lock(){
-            Ok(ctx) => ctx,
-            Err(_) => return Err(TpmStorageError::DeviceUnavailableError)
-        };
+        let mut ctx = self.get_context()?;
 
         let persistent = PersistentTpmHandle::new(key_id.0)
             .map_err(|e|{TpmStorageError::BadAddressError(e.to_string())})?;
@@ -361,14 +355,11 @@ impl TpmStorage {
 
 #[cfg(test)]
 pub (crate) mod tests {
-    use std::sync::LazyLock;
-
     use identity_storage::JwkStorage;
-    use tss_esapi::{constants::StartupType, tcti_ldr::NetworkTPMConfig};
+    use tss_esapi::{constants::StartupType, handles::AuthHandle, tcti_ldr::NetworkTPMConfig};
 
     use super::*;
 
-    pub (crate) static TPM : LazyLock<TpmStorage> = std::sync::LazyLock::new(|| {TpmStorage::new_test_instance().unwrap()});
     impl TpmStorage {
         pub(crate) fn new_test_instance() -> Result<TpmStorage> {
                 let location = Tcti::Mssim(NetworkTPMConfig::default());
@@ -399,44 +390,30 @@ pub (crate) mod tests {
                 let _ = ctx.clear(AuthHandle::Owner);
                 Ok(TpmStorage{ctx: Arc::new(Mutex::new(ctx)), primary: Arc::new(storage_primary.key_handle.clone()), session: Arc::new(auth_session)})
         }
-    
-        fn clear_tpm(&self) -> Result<()>{
-            let mut ctx = match self.ctx.lock(){
-                Ok(ctx) => ctx,
-                Err(_) => return Err(anyhow!(TpmStorageError::DeviceUnavailableError))
-            };
-    
-            let _ = ctx.clear(AuthHandle::Owner);
-            Ok(()) 
-        }
-    }
 
-    impl Drop for TpmStorage{
-
-        fn drop(&mut self) {
-            let _ = self.clear_tpm();
-        }
     }
 
     #[tokio::test]
     async fn create_key() -> Result<(), anyhow::Error>{
-        let signing_key = TPM.create_signing_key(&TpmKeyType::P256);
+        let tpm = TpmStorage::new_test_instance()?;
+        let signing_key = tpm.create_signing_key(&TpmKeyType::P256);
         assert!(signing_key.is_ok(), "{}", signing_key.err().unwrap());
         Ok(())
     }
 
     #[tokio::test]
     async fn store_and_delete_key() -> Result<(), anyhow::Error>{
+        let tpm = TpmStorage::new_test_instance()?;
         // key generation
-        let handle = TPM.get_free_handle()?;
-        let (key, _, _) = TPM.create_signing_key(&TpmKeyType::P256)?;
+        let handle = tpm.get_free_handle()?;
+        let (key, _, _) = tpm.create_signing_key(&TpmKeyType::P256)?;
 
         // key storage
-        let handle = TPM.store_key(key, handle);
+        let handle = tpm.store_key(key, handle);
         assert!(handle.is_ok(), "{}", handle.err().unwrap());
         let handle = handle.unwrap();
         // key deletion
-        let delete_result = TPM.delete_key(&handle);
+        let delete_result = tpm.delete_key(&handle);
         assert!(delete_result.is_ok(), "{}", delete_result.err().unwrap());
 
         Ok(())
@@ -444,9 +421,10 @@ pub (crate) mod tests {
 
     #[tokio::test]
     async fn sign_message() -> Result<(), anyhow::Error>{
-        let result = TPM.generate(KeyType::from("P-256"), JwsAlgorithm::ES256).await?;
+        let tpm = TpmStorage::new_test_instance()?;
+        let result = tpm.generate(KeyType::from("P-256"), JwsAlgorithm::ES256).await?;
         let kid = TpmKeyId::try_from(result.key_id.as_str())?;
-        let signature = TPM.tpm_sign(&kid, "tpm signature test".as_bytes(), &result.jwk);
+        let signature = tpm.tpm_sign(&kid, "tpm signature test".as_bytes(), &result.jwk);
         assert!(signature.is_ok(), "{}", signature.err().unwrap());
         println!("Signature {:?}", signature.unwrap());
         Ok(())

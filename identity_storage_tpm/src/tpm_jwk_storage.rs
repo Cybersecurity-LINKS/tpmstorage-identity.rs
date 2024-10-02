@@ -46,7 +46,7 @@ impl JwkStorage for TpmStorage{
     /// If called an Error is always returned.
     /// This method cannot be used inside the TPM. 
     /// Importing an external key inside the TPM is not supported.
-    async fn insert(&self, jwk: Jwk) -> KeyStorageResult<KeyId>{
+    async fn insert(&self, _jwk: Jwk) -> KeyStorageResult<KeyId>{
         Err(KeyStorageError::new(KeyStorageErrorKind::Unavailable)
         .with_custom_message("Cannot store external keys inside the TPM device"))
     }
@@ -79,7 +79,7 @@ impl JwkStorage for TpmStorage{
             .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
 
         self.delete_key(&key_id)
-            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::KeyNotFound)})
+            .map_err(|_| {KeyStorageError::new(KeyStorageErrorKind::KeyNotFound)})
     }
 
     /// Returns `true` if the key with the given `key_id` exists in storage, `false` otherwise.
@@ -97,7 +97,7 @@ mod tests{
     use identity_jose::jws::JwsAlgorithm;
     use identity_storage::{JwkStorage, KeyType};
 
-    use crate::tpm_storage::{tests::TPM, TpmKeyId, TpmStorage};
+    use crate::tpm_storage::{TpmKeyId, TpmStorage};
 
     #[tokio::test]
     async fn generate_and_delete_key() -> Result<(), anyhow::Error>{
@@ -112,7 +112,7 @@ mod tests{
         assert!(tpm.contains(&kid)?);
 
         // delete the key
-        let delete_result = TPM.delete_key(&kid);
+        let delete_result = tpm.delete_key(&kid);
         assert!(delete_result.is_ok(), "{}", delete_result.unwrap_err().to_string());
         println!("Deleted!");
         Ok(())
@@ -120,8 +120,9 @@ mod tests{
 
     #[tokio::test]
     async fn sign() -> Result<(), anyhow::Error>{
-        let result = TPM.generate(KeyType::new("P-256"), JwsAlgorithm::ES256).await?;
-        let signature = TPM.sign(&result.key_id, "some message to sign".as_bytes(), &result.jwk).await;
+        let tpm = TpmStorage::new_test_instance()?;
+        let result = tpm.generate(KeyType::new("P-256"), JwsAlgorithm::ES256).await?;
+        let signature = tpm.sign(&result.key_id, "some message to sign".as_bytes(), &result.jwk).await;
         assert!(signature.is_ok(), "{}", signature.err().unwrap());
         Ok(())
     }
