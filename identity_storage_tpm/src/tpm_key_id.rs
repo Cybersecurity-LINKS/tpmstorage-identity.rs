@@ -2,7 +2,7 @@ use std::{fmt::Display, ops::Deref};
 use identity_storage::KeyId;
 use tss_esapi::handles::{KeyHandle, ObjectHandle};
 
-use crate::error::{self, TpmStorageError};
+use crate::error::TpmStorageError;
 
 /// Custom struct to convert Tpm handle to [`KeyId`]
 #[derive(Debug, PartialEq, Clone)]

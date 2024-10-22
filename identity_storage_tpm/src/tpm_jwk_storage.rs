@@ -22,14 +22,15 @@ impl JwkStorage for TpmStorage{
             .with_custom_message(e.to_string())})?;
 
         // Generate a new key
-        let (key_obj, public, name) = self.create_signing_key(&key_type)
+        let (public, name) = self.create_signing_key(&key_type)
         .map_err(|_| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message("Cannot create the key")})?;
 
         // Store the Key
-        let stored_ref = self.store_key(key_obj, handle)
-        .map_err(|e|{KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
+        //let stored_ref = self.store_key(key_obj, handle)
+        //.map_err(|e|{KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
         
-        let kid: KeyId = KeyId::from(stored_ref);
+        // TODO: This have to be a random
+        let kid: KeyId = KeyId::new("");
         
         // Create Jwk
         let mut jwk = TpmStorage::encode_jwk(&key_type, public)?;
