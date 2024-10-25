@@ -1,4 +1,4 @@
-use crate::tpm_key_id::TpmKeyId;
+use crate::tpm_storage::TpmKeyId;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TpmStorageError{
@@ -19,5 +19,7 @@ pub enum TpmStorageError{
     #[error("Cannot delete the resource {handle}, reason: {reason}")]
     DeleteError{handle: TpmKeyId, reason: String},
     #[error("Device not found: {0}")]
-    DeviceNotFound(String)
+    DeviceNotFound(String),
+    #[error("The size {0} is not valid")]
+    SizeError(usize)
 }

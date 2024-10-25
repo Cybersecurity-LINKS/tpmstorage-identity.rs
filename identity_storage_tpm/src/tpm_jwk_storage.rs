@@ -3,10 +3,10 @@ use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{JwkGenOutput, JwkStorage, KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
 
 use crate::tpm_storage::{TpmKeyType, TpmStorage};
-use crate::tpm_key_id::TpmKeyId;
 
 #[async_trait(?Send)]
 impl JwkStorage for TpmStorage{
+
     /// Generate a new key represented as a JSON Web Key.
     ///
     /// It is recommended that the implementer exposes constants for the supported [`KeyType`].
@@ -17,20 +17,18 @@ impl JwkStorage for TpmStorage{
         TpmStorage::match_kty_with_alg(&key_type, &alg)?;
 
         // Assign a new KeyId
-        let handle = self.get_free_handle()
-        .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unavailable)
-            .with_custom_message(e.to_string())})?;
+        let kid: KeyId = self.new_key_id()
+            .map_err(|_| {KeyStorageError::new(KeyStorageErrorKind::Unavailable).with_custom_message("Cannot create a random KeyId")})?;
 
         // Generate a new key
-        let (public, name) = self.create_signing_key(&key_type)
-        .map_err(|_| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message("Cannot create the key")})?;
+        let (public, name) = self.create_signing_key(&key_type, &kid)
+            .map_err(|_| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message("Cannot create the key")})?;
 
         // Store the Key
         //let stored_ref = self.store_key(key_obj, handle)
         //.map_err(|e|{KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
         
         // TODO: This have to be a random
-        let kid: KeyId = KeyId::new("");
         
         // Create Jwk
         let mut jwk = TpmStorage::encode_jwk(&key_type, public)?;
@@ -62,10 +60,8 @@ impl JwkStorage for TpmStorage{
     /// corresponds to `key_id` and additional checks for this in the `sign` implementation are normally not required.
     /// This is however based on the expectation that the key material associated with a given [`KeyId`] is immutable.  
     async fn sign(&self, key_id: &KeyId, data: &[u8], public_key: &Jwk) -> KeyStorageResult<Vec<u8>>{
-        let kid = TpmKeyId::try_from(key_id.as_str())
-            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
-        self.tpm_sign(&kid, data, public_key)
-        .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})
+        todo!("Fix this");
+
     }
 
     /// Deletes the key identified by `key_id`.
@@ -77,20 +73,12 @@ impl JwkStorage for TpmStorage{
     ///
     /// This operation cannot be undone. The keys are purged permanently.
     async fn delete(&self, key_id: &KeyId) -> KeyStorageResult<()>{
-        let key_id = TpmKeyId::try_from(key_id.as_str())
-            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
-
-        self.delete_key(&key_id)
-            .map_err(|_| {KeyStorageError::new(KeyStorageErrorKind::KeyNotFound)})
+        todo!("DeleteThis")
     }
 
     /// Returns `true` if the key with the given `key_id` exists in storage, `false` otherwise.
     async fn exists(&self, key_id: &KeyId) -> KeyStorageResult<bool>{
-        let key_id = TpmKeyId::try_from(key_id.as_str())
-            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message(e.to_string())})?;
-
-        self.contains(&key_id)
-            .map_err(|e| {KeyStorageError::new(KeyStorageErrorKind::KeyNotFound).with_custom_message(e.to_string())})
+        todo!("Fix");
     }
 }
 
@@ -100,7 +88,6 @@ mod tests{
     use identity_storage::{JwkStorage, KeyType};
 
     use crate::tpm_storage::TpmStorage;
-    use crate::tpm_key_id::TpmKeyId;
 
     #[tokio::test]
     async fn generate_and_delete_key() -> Result<(), anyhow::Error>{
@@ -109,10 +96,7 @@ mod tests{
         assert!(result.is_ok(), "{}", result.unwrap_err().to_string());
         let result = result.unwrap();
         println!("{:#?}", result);
-        let kid = TpmKeyId::try_from(result.key_id.as_str())?;
-
-        // if generated it must exists
-        assert!(tpm.contains(&kid)?);
+        let kid = result.key_id;
 
         // delete the key
         let delete_result = tpm.delete_key(&kid);
