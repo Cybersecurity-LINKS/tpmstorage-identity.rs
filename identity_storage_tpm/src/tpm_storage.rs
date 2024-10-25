@@ -184,8 +184,21 @@ impl TpmStorage {
         }
     }
 
+    /// Generate a Signature using keys owned by the TPM
+    /// 
+    /// ---
+    /// #### Params
+    /// - **key_id**: key identifier of the key for signature
+    /// - **data**: payload to be signed
+    /// - **jwk**: public Jwk containing the name in the kid property. It is checked to guarantee that the signature is performed with the correct key.
+    /// ---
+    /// #### Returns
+    /// - Signature bytes as a [Vec<u8>]
     pub (crate) fn tpm_sign(&self, key_id: &TpmKeyId, data: &[u8],jwk: &Jwk) -> Result<Vec<u8>, TpmStorageError>{
-        let alg = jwk.alg().ok_or(TpmStorageError::BadInput(format!("jwk alg is None")))?;
+
+        // Check input data
+        let alg = jwk.alg().ok_or(TpmStorageError::BadInput("Jwk alg is None".to_owned()))?;
+        let jwk_kid = jwk.kid().ok_or(TpmStorageError::BadInput("kid not found".to_owned()))?;
         let scheme = Self::get_signature_scheme(alg)
             .map_err(|e| {TpmStorageError::BadInput(e.to_string())})?;
         let hashing_alg = scheme.signing_scheme()
@@ -193,25 +206,40 @@ impl TpmStorage {
         let data = MaxBuffer::try_from(data)
             .map_err(|_| {TpmStorageError::BadInput("bad size of input data".to_owned())})?;
 
+        // Read the key from cache
+        let handle = self.cache.try_borrow()
+            .map_err(|_| {TpmStorageError::UnexpectedBehaviour("Cannot access cache".to_owned())})
+            .and_then(|cache| {cache.get(key_id).ok_or(TpmStorageError::KeyNotFound).copied()})?;
+
+        // Read the name of the key and check it with the Jwk
         let mut ctx = self.get_context()?;
+
+        let name = Self::get_name(&mut ctx, handle.clone())
+            .and_then(|bytes| {Ok(hex::encode(bytes))})?;
+
+        // Guard the rest of the function if the name is not correct
+        if name.ne(jwk_kid) {
+            return Err(TpmStorageError::BadInput("Malformed Jwk".to_owned()))
+        }
+
+        // Hash the message with the required algorithm
         let (hash, ticket) = ctx.hash(data, hashing_alg, Hierarchy::Owner)
         .map_err(|_| {TpmStorageError::UnexpectedBehaviour("unsupported hashing algorithm".to_owned())})?;
         
-        todo!("Retrieve the key from cache");
-        /*let signature = ctx.execute_with_session(*self.session, |context| {
-            context.sign(obj_handle.into(), hash, scheme, ticket)
+        // Sign
+        let signature = ctx.execute_with_session(*self.session, |context| {
+            context.sign(handle.into(), hash, scheme, ticket)
             .map_err(|e| {TpmStorageError::SignatureError(e.to_string())})
         })?;
 
-        Self::get_signature_result(signature)*/
+        Self::get_signature_result(signature)
     }
 
     /// Delete a key from cache
-    /// If the key is not found a KeyNotFoundError is return
+    /// If the key is not found a KeyNotFound error is return
     pub (crate) fn delete_key(&self, key_id: &TpmKeyId)-> Result<(), TpmStorageError>{
         self.cache.borrow_mut().remove(&key_id)
             .ok_or(TpmStorageError::KeyNotFound)?;
-
         Ok(())
     }
     
@@ -236,6 +264,8 @@ impl TpmStorage {
 
 #[cfg(test)]
 pub (crate) mod tests {
+    use std::{any::Any, ptr::eq, result};
+
     use identity_storage::JwkStorage;
     use tss_esapi::{constants::StartupType, tcti_ldr::NetworkTPMConfig};
 
@@ -310,13 +340,13 @@ pub (crate) mod tests {
         let kid = tpm.new_key_id()?;
         let (_, _) = tpm.create_signing_key(TpmKeyType::P256, &kid)?;
 
-        // key storage
-        //let handle = tpm.store_key(key, handle);
-        //assert!(handle.is_ok(), "{}", handle.err().unwrap());
-        //let handle = handle.unwrap();
-        // key deletion
-        //let delete_result = tpm.delete_key(&handle);
-        //assert!(delete_result.is_ok(), "{}", delete_result.err().unwrap());
+        // delete once
+        let result = tpm.delete_key(&kid);
+        assert!(result.is_ok());
+
+        // delete twice 
+        let result = tpm.delete_key(&kid);
+        assert!(result.is_err());
 
         Ok(())
     }
@@ -328,7 +358,6 @@ pub (crate) mod tests {
         let kid = result.key_id;
         let signature = tpm.tpm_sign(&kid, "tpm signature test".as_bytes(), &result.jwk);
         assert!(signature.is_ok(), "{}", signature.err().unwrap());
-        println!("Signature {:?}", signature.unwrap());
         Ok(())
     }
 }
