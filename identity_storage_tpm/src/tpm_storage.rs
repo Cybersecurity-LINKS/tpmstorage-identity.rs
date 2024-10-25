@@ -1,11 +1,13 @@
-use std::{cell::RefCell, collections::HashMap, ops::DerefMut, sync::{Arc, Mutex, MutexGuard, RwLock}};
+use std::{collections::HashMap, sync::{Arc, Mutex, MutexGuard, RwLock}};
 
-use identity_jose::{jwk::{Jwk, JwkParamsEc}, jws::JwsAlgorithm, jwu::{self}};
+use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
-use tss_esapi::{attributes::ObjectAttributes, constants::SessionType, handles::{KeyHandle, ObjectHandle, PersistentTpmHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, dynamic_handles::Persistent, ecc::EccCurve, resource_handles::{Hierarchy, Provision}, session_handles::AuthSession}, structures::{CapabilityData, EccParameter, EccPoint, EccScheme, HashScheme, MaxBuffer, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, utils::PublicKey, Context};
-use anyhow::{anyhow, Result};
+use tss_esapi::{attributes::ObjectAttributes, constants::SessionType, handles::{KeyHandle, ObjectHandle}, 
+interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, resource_handles::Hierarchy, session_handles::AuthSession}, 
+structures::{EccParameter, EccPoint, EccScheme, HashScheme, MaxBuffer, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, 
+utils::PublicKey, Context};
 
-use crate::error::TpmStorageError;
+use crate::error::{BadInput, TpmStorageError};
 
 /// Supported key types for TPM Storage
 #[derive(Debug, Clone, Copy)]
@@ -40,26 +42,27 @@ pub type TpmObjectCache = HashMap<TpmKeyId, ObjectHandle>;
 /// Storage implementation that uses the TPM for securely storing JWKs.
 #[derive(Debug)]
 pub struct TpmStorage{
-    pub (crate) ctx: Arc<Mutex<Context>>,
+    pub (crate) ctx: Mutex<Context>,
     pub (crate) session: Arc<Option<AuthSession>>,
 
-    cache: RefCell<TpmObjectCache>
+    cache: RwLock<TpmObjectCache>
 }
 
 
 impl TpmStorage {
     /// Generating a new TpmStorage struct
-    pub fn new(context: Context) -> Result<TpmStorage>{
+    pub fn new(context: Context) -> Result<TpmStorage, TpmStorageError>{
         let mut ctx = context;
         // Generate an Auth Session for TPM communication.
         let auth_session = ctx.start_auth_session(None, None, None, 
             SessionType::Hmac,
             SymmetricDefinition::AES_128_CFB,
-            HashingAlgorithm::Sha256)?;
+            HashingAlgorithm::Sha256)
+            .map_err(|e| {TpmStorageError::StartupError(e.to_string())})?;
 
-        Ok(TpmStorage{ctx: Arc::new(Mutex::new(ctx)),
+        Ok(TpmStorage{ctx: Mutex::new(ctx),
             session: Arc::new(auth_session),
-            cache: RefCell::new(TpmObjectCache::new())})
+            cache: RwLock::new(TpmObjectCache::new())})
     }
 
     pub (crate) fn match_kty_with_alg(key_type: &TpmKeyType, alg: &JwsAlgorithm) -> KeyStorageResult<()>{
@@ -75,7 +78,7 @@ impl TpmStorage {
     /// The object name must be checked in order to check that the requested key is actually the one retrived using the TPM handle
     fn get_name(context: &mut Context, object_handle: ObjectHandle) -> Result<Vec<u8>, TpmStorageError>{
         context.tr_get_name(object_handle)
-            .map_err(|_|{TpmStorageError::BadAddressError("key not found".to_owned())})
+            .map_err(|_|{TpmStorageError::KeyNotFound})
             .and_then(|name| {Ok(Vec::from(name.value()))})
     }
     
@@ -93,7 +96,7 @@ impl TpmStorage {
 
         let ecc_parameter= match unique {
             Some(data) => EccParameter::try_from(data)
-                .map_err(|_| {TpmStorageError::UnexpectedBehaviour("Bad Key Id size".to_owned())})?,
+                .map_err(|_| {TpmStorageError::BadInput(BadInput::InputSize("keyId".to_owned()))})?,
             None => EccParameter::default(),
         };
 
@@ -131,10 +134,11 @@ impl TpmStorage {
     /// The public key corresponding to the provided `key_id` 
     pub (crate) fn create_signing_key(&self, key_type: TpmKeyType, key_id: &TpmKeyId) -> Result<(PublicKey, TpmObjectName), TpmStorageError>{
         let mut ctx =  self.get_context()?;
-        let mut cache = self.cache.borrow_mut();
+        let mut cache = self.cache.try_write()
+            .map_err(|_| {TpmStorageError::UnexpectedBehaviour("Cannot access Cache".to_owned())})?;
         
         let unique= hex::decode(key_id.as_str())
-            .map_err(|_| {TpmStorageError::BadInput(format!("KeyId {} not supported", key_id))})?;
+            .map_err(|_| {TpmStorageError::BadInput(BadInput::InputSize("keyId".to_owned()))})?;
 
         let public = Self::select_key_parameters(key_type, Some(&unique))?;
         let key_result = ctx.execute_with_session(*self.session, |ctx| -> Result<(PublicKey, TpmObjectName, KeyHandle), TpmStorageError>{
@@ -146,34 +150,22 @@ impl TpmStorage {
 
             let public_key = PublicKey::try_from(key.out_public)
                 .map_err(|e|{TpmStorageError::KeyGenerationError(e.to_string())})?;
-
+        
             Ok((public_key, name, key.key_handle))
         })?;
 
         // add the new key to the cache
         cache.insert(key_id.clone(), key_result.2.into());
-        
+        ctx.flush_context(key_result.2.into());
         Ok((key_result.0, key_result.1))
     }
     
-    fn encode_ec_jwk(key_type: TpmKeyType, x: impl AsRef<[u8]>, y: impl AsRef<[u8]>) -> Jwk{
-        let mut params = JwkParamsEc::new();
-        params.x = jwu::encode_b64(x);
-        params.y = jwu::encode_b64(y);
-        params.crv = key_type.to_string();
-        Jwk::from_params(params)
-    }
-    pub (crate) fn encode_jwk(key_type: TpmKeyType, public_key: PublicKey) -> Result<Jwk, KeyStorageError>{
-        match (key_type, public_key){
-            (TpmKeyType::P256, PublicKey::Ecc { x, y }) => Ok(Self::encode_ec_jwk(key_type, &x, &y)),
-            _ => Err(KeyStorageError::new(KeyStorageErrorKind::UnsupportedKeyType))
-        }
-    }
 
-    fn get_signature_scheme(alg: &str) -> Result<SignatureScheme>{
+
+    fn get_signature_scheme(alg: &str) -> Result<SignatureScheme, TpmStorageError>{
         match alg {
             "ES256" => Ok(SignatureScheme::EcDsa { hash_scheme: HashScheme::new(HashingAlgorithm::Sha256) }),
-            _ => Err(KeyStorageError::new(KeyStorageErrorKind::KeyAlgorithmMismatch).into())
+            _ => Err(TpmStorageError::BadInput(BadInput::SignatureAlgorithm))
         }
     }
 
@@ -197,17 +189,17 @@ impl TpmStorage {
     pub (crate) fn tpm_sign(&self, key_id: &TpmKeyId, data: &[u8],jwk: &Jwk) -> Result<Vec<u8>, TpmStorageError>{
 
         // Check input data
-        let alg = jwk.alg().ok_or(TpmStorageError::BadInput("Jwk alg is None".to_owned()))?;
-        let jwk_kid = jwk.kid().ok_or(TpmStorageError::BadInput("kid not found".to_owned()))?;
+        let alg = jwk.alg().ok_or(TpmStorageError::BadInput(BadInput::SignatureAlgorithm))?;
+        let jwk_kid = jwk.kid().ok_or(TpmStorageError::BadInput(BadInput::InputSize("keyId".to_owned())))?;
         let scheme = Self::get_signature_scheme(alg)
-            .map_err(|e| {TpmStorageError::BadInput(e.to_string())})?;
+            .map_err(|_| {TpmStorageError::BadInput(BadInput::SignatureAlgorithm)})?;
         let hashing_alg = scheme.signing_scheme()
             .map_err(|e| {TpmStorageError::UnexpectedBehaviour(e.to_string())})?; // should not happen since this struct is setting the proper scheme
         let data = MaxBuffer::try_from(data)
-            .map_err(|_| {TpmStorageError::BadInput("bad size of input data".to_owned())})?;
+            .map_err(|_| {TpmStorageError::BadInput(BadInput::InputSize("signature payload".to_owned()))})?;
 
         // Read the key from cache
-        let handle = self.cache.try_borrow()
+        let handle = self.cache.try_read()
             .map_err(|_| {TpmStorageError::UnexpectedBehaviour("Cannot access cache".to_owned())})
             .and_then(|cache| {cache.get(key_id).ok_or(TpmStorageError::KeyNotFound).copied()})?;
 
@@ -219,7 +211,7 @@ impl TpmStorage {
 
         // Guard the rest of the function if the name is not correct
         if name.ne(jwk_kid) {
-            return Err(TpmStorageError::BadInput("Malformed Jwk".to_owned()))
+            return Err(TpmStorageError::BadInput(BadInput::Jwk))
         }
 
         // Hash the message with the required algorithm
@@ -232,13 +224,16 @@ impl TpmStorage {
             .map_err(|e| {TpmStorageError::SignatureError(e.to_string())})
         })?;
 
+        ctx.flush_context(handle);
         Self::get_signature_result(signature)
     }
 
     /// Delete a key from cache
     /// If the key is not found a KeyNotFound error is return
     pub (crate) fn delete_key(&self, key_id: &TpmKeyId)-> Result<(), TpmStorageError>{
-        self.cache.borrow_mut().remove(&key_id)
+        self.cache.try_write()
+            .map_err(|_| {TpmStorageError::UnexpectedBehaviour("Cannot access cache".to_owned())})?
+            .remove(&key_id)
             .ok_or(TpmStorageError::KeyNotFound)?;
         Ok(())
     }
@@ -246,25 +241,30 @@ impl TpmStorage {
     /// Generate random `size` bytes using the TPM TRNG
     fn random(&self, ctx: &mut Context ,size: usize) -> Result<Vec<u8>, TpmStorageError>{
         ctx.get_random(size)
-            .map_err(|_| {TpmStorageError::SizeError(size)})
+            .map_err(|_| {TpmStorageError::BadInput(BadInput::InputSize("random size".to_owned()))})
             .and_then(|digest| {Ok(Vec::from(digest.value()))})
     }
 
     /// Generate a random KeyId for TpmStorage
     /// ### Returns
     /// Random [TpmKeyId] of fixed size of 32 bytes.
-    pub fn new_key_id(&self) -> Result<TpmKeyId, TpmStorageError>{
+    pub (crate) fn new_key_id(&self) -> Result<TpmKeyId, TpmStorageError>{
         let mut ctx = self.get_context()?;
         let bytes= self.random(&mut ctx, 32)?;
         let hex = hex::encode(bytes);
         Ok(TpmKeyId::new(hex))
+    }
+
+    pub(crate) fn contains(&self, key_id: &TpmKeyId) -> Result<bool, TpmStorageError>{
+        self.cache.try_read()
+            .map_err(|_| {TpmStorageError::UnexpectedBehaviour("Cannot access cache".to_owned())})
+            .and_then(|cache| {Ok(cache.contains_key(key_id))})
     }
 }
 
 
 #[cfg(test)]
 pub (crate) mod tests {
-    use std::{any::Any, ptr::eq, result};
 
     use identity_storage::JwkStorage;
     use tss_esapi::{constants::StartupType, tcti_ldr::NetworkTPMConfig};
@@ -272,11 +272,14 @@ pub (crate) mod tests {
     use super::*;
 
     impl TpmStorage {
-        pub(crate) fn new_test_instance() -> Result<TpmStorage> {
+        pub(crate) fn new_test_instance() -> Result<TpmStorage, TpmStorageError> {
             let location = tss_esapi::Tcti::Mssim(NetworkTPMConfig::default());
-            let mut ctx = Context::new(location)?;
+            let mut ctx = Context::new(location)
+                .map_err(|_| {TpmStorageError::StartupError("Test instance cannot reache the simulator".to_owned())})?;
+
             // TPM Simulator startup
-            let _ = ctx.startup(StartupType::Clear)?;
+            let _ = ctx.startup(StartupType::Clear)
+                .map_err(|_| {TpmStorageError::StartupError("Cannot communicate with the simulator".to_owned())})?;
             Self::new(ctx)
         }
 
@@ -293,7 +296,7 @@ pub (crate) mod tests {
         //1.1 ensure it is cached
         let obj_ref;
         {
-            let cache = tpm.cache.borrow();
+            let cache = tpm.cache.try_read().unwrap();
             assert_eq!(cache.len(), 1);
             assert!(cache.contains_key(&kid));
             obj_ref = cache.get(&kid).copied();
@@ -308,7 +311,7 @@ pub (crate) mod tests {
 
         //2.1 Ensure the new object is cached
         {
-            let cache = tpm.cache.borrow();
+            let cache = tpm.cache.try_read().unwrap();
             assert_eq!(&kid.as_str(), &other_kid.as_str());
             assert_eq!(cache.len(), 1);
             assert!(cache.contains_key(&other_kid));
@@ -323,7 +326,7 @@ pub (crate) mod tests {
 
         //3.1 Ensure the new object is cached
         {
-            let cache = tpm.cache.borrow();
+            let cache = tpm.cache.try_read().unwrap();
             assert_ne!(&kid.as_str(), &other_kid.as_str());
             assert_eq!(cache.len(), 2);
             assert!(cache.contains_key(&other_kid));
