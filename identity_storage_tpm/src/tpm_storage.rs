@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use crate::error::TpmStorageError;
 
 /// Supported key types for TPM Storage
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum TpmKeyType{
     P256,
 }
@@ -85,7 +85,7 @@ impl TpmStorage {
         .map_err(|_| {TpmStorageError::DeviceUnavailableError})
     }
 
-    fn select_ecc_key_parameters(key_type: &TpmKeyType, unique: Option<&[u8]>) -> Result<Public, TpmStorageError>{
+    fn select_ecc_key_parameters(key_type: TpmKeyType, unique: Option<&[u8]>) -> Result<Public, TpmStorageError>{
 
         let (crv, hashing) = match key_type {
             TpmKeyType::P256 => (EccCurve::NistP256, HashingAlgorithm::Sha256)
@@ -116,7 +116,7 @@ impl TpmStorage {
     }
     
     /// Generate the correct [`Public`] structure starting from a [`TpmKeyType`]
-    fn select_key_parameters(key_type: &TpmKeyType, unique: Option<&[u8]>) -> Result<Public, TpmStorageError>{
+    fn select_key_parameters(key_type: TpmKeyType, unique: Option<&[u8]>) -> Result<Public, TpmStorageError>{
         match key_type {
             TpmKeyType::P256 => Self::select_ecc_key_parameters(key_type, unique),
         }
@@ -129,7 +129,7 @@ impl TpmStorage {
     /// ---
     /// ### Returns
     /// The public key corresponding to the provided `key_id` 
-    pub (crate) fn create_signing_key(&self, key_type: &TpmKeyType, key_id: &TpmKeyId) -> Result<(PublicKey, TpmObjectName), TpmStorageError>{
+    pub (crate) fn create_signing_key(&self, key_type: TpmKeyType, key_id: &TpmKeyId) -> Result<(PublicKey, TpmObjectName), TpmStorageError>{
         let mut ctx =  self.get_context()?;
         let mut cache = self.cache.borrow_mut();
         
@@ -156,14 +156,14 @@ impl TpmStorage {
         Ok((key_result.0, key_result.1))
     }
     
-    fn encode_ec_jwk(key_type: &TpmKeyType, x: impl AsRef<[u8]>, y: impl AsRef<[u8]>) -> Jwk{
+    fn encode_ec_jwk(key_type: TpmKeyType, x: impl AsRef<[u8]>, y: impl AsRef<[u8]>) -> Jwk{
         let mut params = JwkParamsEc::new();
         params.x = jwu::encode_b64(x);
         params.y = jwu::encode_b64(y);
         params.crv = key_type.to_string();
         Jwk::from_params(params)
     }
-    pub (crate) fn encode_jwk(key_type: &TpmKeyType, public_key: PublicKey) -> Result<Jwk, KeyStorageError>{
+    pub (crate) fn encode_jwk(key_type: TpmKeyType, public_key: PublicKey) -> Result<Jwk, KeyStorageError>{
         match (key_type, public_key){
             (TpmKeyType::P256, PublicKey::Ecc { x, y }) => Ok(Self::encode_ec_jwk(key_type, &x, &y)),
             _ => Err(KeyStorageError::new(KeyStorageErrorKind::UnsupportedKeyType))
@@ -206,8 +206,13 @@ impl TpmStorage {
         Self::get_signature_result(signature)*/
     }
 
+    /// Delete a key from cache
+    /// If the key is not found a KeyNotFoundError is return
     pub (crate) fn delete_key(&self, key_id: &TpmKeyId)-> Result<(), TpmStorageError>{
-        todo!("What does it means key deletion in this case?")
+        self.cache.borrow_mut().remove(&key_id)
+            .ok_or(TpmStorageError::KeyNotFound)?;
+
+        Ok(())
     }
     
     /// Generate random `size` bytes using the TPM TRNG
@@ -252,8 +257,7 @@ pub (crate) mod tests {
         let tpm = TpmStorage::new_test_instance()?;
         //1. Generate a Key
         let kid = tpm.new_key_id()?;
-        println!("Key ID => {kid}");
-        let signing_key = tpm.create_signing_key(&TpmKeyType::P256, &kid);
+        let signing_key = tpm.create_signing_key(TpmKeyType::P256, &kid);
         assert!(signing_key.is_ok(), "{}", signing_key.err().unwrap());
         
         //1.1 ensure it is cached
@@ -267,9 +271,10 @@ pub (crate) mod tests {
 
         //2. Create the same key twice, ensure it's equal
         let other_kid = KeyId::from(kid.clone());
-        let other_key = tpm.create_signing_key(&TpmKeyType::P256, &other_kid);
+        let other_key = tpm.create_signing_key(TpmKeyType::P256, &other_kid);
         assert!(other_key.is_ok(), "{}", other_key.err().unwrap());
-        assert_eq!(signing_key.unwrap(), other_key.unwrap());
+        let signing_key = signing_key.unwrap();
+        assert_eq!(signing_key, other_key.unwrap());
 
         //2.1 Ensure the new object is cached
         {
@@ -279,6 +284,22 @@ pub (crate) mod tests {
             assert!(cache.contains_key(&other_kid));
             assert_ne!(obj_ref, cache.get(&other_kid).copied());
         }
+        
+        //3. Generate a different key
+        let other_kid = tpm.new_key_id()?;
+        let other_key = tpm.create_signing_key(TpmKeyType::P256, &other_kid);
+        assert!(other_key.is_ok(), "{}", other_key.err().unwrap());
+        assert_ne!(signing_key, other_key.unwrap());
+
+        //3.1 Ensure the new object is cached
+        {
+            let cache = tpm.cache.borrow();
+            assert_ne!(&kid.as_str(), &other_kid.as_str());
+            assert_eq!(cache.len(), 2);
+            assert!(cache.contains_key(&other_kid));
+            assert_ne!(obj_ref, cache.get(&other_kid).copied());
+        }
+
         Ok(())
     }
 
@@ -287,7 +308,7 @@ pub (crate) mod tests {
         let tpm = TpmStorage::new_test_instance()?;
         // key generation
         let kid = tpm.new_key_id()?;
-        let (_, _) = tpm.create_signing_key(&TpmKeyType::P256, &kid)?;
+        let (_, _) = tpm.create_signing_key(TpmKeyType::P256, &kid)?;
 
         // key storage
         //let handle = tpm.store_key(key, handle);

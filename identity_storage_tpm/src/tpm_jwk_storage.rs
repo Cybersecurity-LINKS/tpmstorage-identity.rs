@@ -21,7 +21,7 @@ impl JwkStorage for TpmStorage{
             .map_err(|_| {KeyStorageError::new(KeyStorageErrorKind::Unavailable).with_custom_message("Cannot create a random KeyId")})?;
 
         // Generate a new key
-        let (public, name) = self.create_signing_key(&key_type, &kid)
+        let (public, name) = self.create_signing_key(key_type.into(), &kid)
             .map_err(|_| {KeyStorageError::new(KeyStorageErrorKind::Unspecified).with_custom_message("Cannot create the key")})?;
 
         // Store the Key
@@ -31,7 +31,7 @@ impl JwkStorage for TpmStorage{
         // TODO: This have to be a random
         
         // Create Jwk
-        let mut jwk = TpmStorage::encode_jwk(&key_type, public)?;
+        let mut jwk = TpmStorage::encode_jwk(key_type, public)?;
         jwk.set_alg(alg.name());
         jwk.set_kid(name);
         let public_jwk = jwk.to_public().expect("unexpected error during jwk generation");

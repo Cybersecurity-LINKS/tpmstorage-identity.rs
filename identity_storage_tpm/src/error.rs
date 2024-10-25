@@ -8,6 +8,8 @@ pub enum TpmStorageError{
     KeyGenerationError(String),
     #[error("Key storage error. Reason {0}")]
     KeyStorageError(String),
+    #[error("Key not found")]
+    KeyNotFound,
     #[error("InvalidAddress: {0}")]
     BadAddressError(String),
     #[error("Bad input value: {0}")]
