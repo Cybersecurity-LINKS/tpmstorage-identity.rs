@@ -156,7 +156,6 @@ impl TpmStorage {
 
         // add the new key to the cache
         cache.insert(key_id.clone(), key_result.2.into());
-        ctx.flush_context(key_result.2.into());
         Ok((key_result.0, key_result.1))
     }
     
@@ -224,7 +223,6 @@ impl TpmStorage {
             .map_err(|e| {TpmStorageError::SignatureError(e.to_string())})
         })?;
 
-        ctx.flush_context(handle);
         Self::get_signature_result(signature)
     }
 
@@ -267,13 +265,13 @@ impl TpmStorage {
 pub (crate) mod tests {
 
     use identity_storage::JwkStorage;
-    use tss_esapi::{constants::StartupType, tcti_ldr::NetworkTPMConfig};
+    use tss_esapi::constants::StartupType;
 
     use super::*;
 
     impl TpmStorage {
         pub(crate) fn new_test_instance() -> Result<TpmStorage, TpmStorageError> {
-            let location = tss_esapi::Tcti::Mssim(NetworkTPMConfig::default());
+            let location = tss_esapi::Tcti::Tabrmd(tss_esapi::tcti_ldr::TabrmdConfig::default());
             let mut ctx = Context::new(location)
                 .map_err(|_| {TpmStorageError::StartupError("Test instance cannot reache the simulator".to_owned())})?;
 
