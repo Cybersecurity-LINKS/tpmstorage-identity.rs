@@ -1,6 +1,8 @@
 // Copyright 2020-2023 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod tpm_utils;
+
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -28,8 +30,8 @@ use iota_sdk::types::block::address::Hrp;
 use rand::distributions::DistString;
 use serde_json::Value;
 
-pub static API_ENDPOINT: &str = "http://localhost";
-pub static FAUCET_ENDPOINT: &str = "http://localhost/faucet/api/enqueue";
+pub static API_ENDPOINT: &str = "https://api.tangle.stardust.linksfoundation.com/";
+pub static FAUCET_ENDPOINT: &str = "https://faucet.tangle.stardust.linksfoundation.com/api/enqueue";
 
 pub type MemStorage = Storage<JwkMemStore, KeyIdMemstore>;
 

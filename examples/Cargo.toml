@@ -10,12 +10,14 @@ anyhow = "1.0.62"
 identity_eddsa_verifier = { path = "../identity_eddsa_verifier", default-features = false }
 identity_iota = { path = "../identity_iota", default-features = false, features = ["iota-client", "client", "memstore", "domain-linkage", "revocation-bitmap", "status-list-2021"] }
 identity_stronghold = { path = "../identity_stronghold", default-features = false }
+identity_storage_tpm = { path = "../identity_storage_tpm" }
 iota-sdk = { version = "1.0", default-features = false, features = ["tls", "client", "stronghold"] }
 primitive-types = "0.12.1"
 rand = "0.8.5"
 sd-jwt-payload = { version = "0.2.1", default-features = false, features = ["sha"] }
 serde_json = { version = "1.0", default-features = false }
 tokio = { version = "1.29", default-features = false, features = ["rt"] }
+tss-esapi.workspace = true
 
 [lib]
 path = "utils/utils.rs"
@@ -91,3 +93,13 @@ name = "7_sd_jwt"
 [[example]]
 path = "1_advanced/8_status_list_2021.rs"
 name = "8_status_list_2021"
+
+# Custom section 
+
+[[example]]
+path = "2_custom/5_create_vc.rs"
+name = "5_create_vc_tpm"
+
+[[example]]
+path = "2_custom/6_create_vp.rs"
+name = "6_create_vp_tpm"
