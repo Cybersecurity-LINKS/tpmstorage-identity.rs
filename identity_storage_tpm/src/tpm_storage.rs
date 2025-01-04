@@ -3,8 +3,8 @@ use std::{collections::HashMap, sync::{Arc, Mutex, MutexGuard, RwLock}};
 use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
 use tss_esapi::{attributes::ObjectAttributes, constants::SessionType, handles::{KeyHandle, ObjectHandle}, 
-interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, resource_handles::Hierarchy, session_handles::AuthSession}, 
-structures::{EccParameter, EccPoint, EccScheme, HashScheme, MaxBuffer, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, 
+interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, reserved_handles::Hierarchy, session_handles::AuthSession}, 
+structures::{Digest, EccParameter, EccPoint, EccScheme, HashScheme, MaxBuffer, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, 
 utils::PublicKey, Context};
 
 use crate::error::{BadInput, TpmStorageError};
@@ -95,7 +95,7 @@ impl TpmStorage {
         };
 
         let ecc_parameter= match unique {
-            Some(data) => EccParameter::try_from(data)
+            Some(data) => EccParameter::from_bytes(data)
                 .map_err(|_| {TpmStorageError::BadInput(BadInput::InputSize("keyId".to_owned()))})?,
             None => EccParameter::default(),
         };
@@ -163,14 +163,14 @@ impl TpmStorage {
 
     fn get_signature_scheme(alg: &str) -> Result<SignatureScheme, TpmStorageError>{
         match alg {
-            "ES256" => Ok(SignatureScheme::EcDsa { hash_scheme: HashScheme::new(HashingAlgorithm::Sha256) }),
+            "ES256" => Ok(SignatureScheme::EcDsa { scheme: HashScheme::new(HashingAlgorithm::Sha256) }),
             _ => Err(TpmStorageError::BadInput(BadInput::SignatureAlgorithm))
         }
     }
 
     fn get_signature_result(signature: Signature) -> Result<Vec<u8>, TpmStorageError>{
         match signature {
-            Signature::EcDsa(sig ) => Ok([sig.signature_r().value(), sig.signature_s().value()].concat()),
+            Signature::EcDsa(sig ) => Ok([sig.signature_r().as_bytes(), sig.signature_s().as_bytes()].concat()),
             _ => Err(TpmStorageError::SignatureError("bad signature result".to_owned()))
         }
     }
@@ -186,7 +186,6 @@ impl TpmStorage {
     /// #### Returns
     /// - Signature bytes as a [Vec<u8>]
     pub (crate) fn tpm_sign(&self, key_id: &TpmKeyId, data: &[u8],jwk: &Jwk) -> Result<Vec<u8>, TpmStorageError>{
-
         // Check input data
         let alg = jwk.alg().ok_or(TpmStorageError::BadInput(BadInput::SignatureAlgorithm))?;
         let jwk_kid = jwk.kid().ok_or(TpmStorageError::BadInput(BadInput::InputSize("keyId".to_owned())))?;
@@ -194,8 +193,6 @@ impl TpmStorage {
             .map_err(|_| {TpmStorageError::BadInput(BadInput::SignatureAlgorithm)})?;
         let hashing_alg = scheme.signing_scheme()
             .map_err(|e| {TpmStorageError::UnexpectedBehaviour(e.to_string())})?; // should not happen since this struct is setting the proper scheme
-        let data = MaxBuffer::try_from(data)
-            .map_err(|_| {TpmStorageError::BadInput(BadInput::InputSize("signature payload".to_owned()))})?;
 
         // Read the key from cache
         let handle = self.cache.try_read()
@@ -214,12 +211,14 @@ impl TpmStorage {
         }
 
         // Hash the message with the required algorithm
-        let (hash, ticket) = ctx.hash(data, hashing_alg, Hierarchy::Owner)
-        .map_err(|_| {TpmStorageError::UnexpectedBehaviour("unsupported hashing algorithm".to_owned())})?;
+        let mut digest = [0u8; crypto::hashes::sha::SHA256_LEN];
+        crypto::hashes::sha::SHA256(data, &mut digest);
+        let hash = Digest::from_bytes(digest.as_slice())
+        .map_err(|e| {TpmStorageError::UnexpectedBehaviour(e.to_string())})?;
         
         // Sign
         let signature = ctx.execute_with_session(*self.session, |context| {
-            context.sign(handle.into(), hash, scheme, ticket)
+            context.sign(handle.into(), hash, scheme, None)
             .map_err(|e| {TpmStorageError::SignatureError(e.to_string())})
         })?;
 
@@ -240,7 +239,7 @@ impl TpmStorage {
     fn random(&self, ctx: &mut Context ,size: usize) -> Result<Vec<u8>, TpmStorageError>{
         ctx.get_random(size)
             .map_err(|_| {TpmStorageError::BadInput(BadInput::InputSize("random size".to_owned()))})
-            .and_then(|digest| {Ok(Vec::from(digest.value()))})
+            .and_then(|digest| {Ok(Vec::from(digest.as_bytes()))})
     }
 
     /// Generate a random KeyId for TpmStorage

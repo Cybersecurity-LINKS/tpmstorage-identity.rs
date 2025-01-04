@@ -174,7 +174,6 @@ async fn main() -> anyhow::Result<()> {
 
   // Create a JWT verifiable presentation using the holder's verification method
   // and include the requested challenge and expiry timestamp.
-  println!("Sign the presentation {:?}", presentation.serialize_jwt(&JwtPresentationOptions::default()));
   let presentation_jwt: Jwt = alice_document
     .create_presentation_jwt(
       &presentation,
