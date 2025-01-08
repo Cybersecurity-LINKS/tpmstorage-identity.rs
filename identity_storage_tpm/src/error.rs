@@ -13,7 +13,11 @@ pub enum TpmStorageError{
     #[error("Unexpected error: {0}")]
     UnexpectedBehaviour(String),
     #[error("Error encountered during sign operation: {0}")]
-    SignatureError(String)
+    SignatureError(String),
+    #[error("Unsupported algorithm {0}")]
+    Unsupported(String),
+    #[error("Tpm Software Stack Error")]
+    TSSError(#[from] tss_esapi::Error)
 }
 
 #[derive(Debug)]

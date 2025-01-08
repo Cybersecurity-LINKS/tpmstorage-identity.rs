@@ -175,6 +175,23 @@ impl TpmStorage {
         }
     }
 
+    fn hash(message: &[u8], alg: HashingAlgorithm) -> Result<Digest, TpmStorageError>{
+        let digest = match alg {
+            HashingAlgorithm::Sha256 => {
+                // Hash the message with the required algorithm
+                let mut digest = [0u8; crypto::hashes::sha::SHA256_LEN];
+                crypto::hashes::sha::SHA256(message, &mut digest);
+                digest
+            }
+            _ => return Err(TpmStorageError::Unsupported(format!("{:?}", alg)))
+        };
+
+        let hash = Digest::from_bytes(digest.as_slice())
+            .map_err(|e| {TpmStorageError::UnexpectedBehaviour(e.to_string())})?;
+
+        Ok(hash)
+    }
+
     /// Generate a Signature using keys owned by the TPM
     /// 
     /// ---
@@ -191,8 +208,6 @@ impl TpmStorage {
         let jwk_kid = jwk.kid().ok_or(TpmStorageError::BadInput(BadInput::InputSize("keyId".to_owned())))?;
         let scheme = Self::get_signature_scheme(alg)
             .map_err(|_| {TpmStorageError::BadInput(BadInput::SignatureAlgorithm)})?;
-        let hashing_alg = scheme.signing_scheme()
-            .map_err(|e| {TpmStorageError::UnexpectedBehaviour(e.to_string())})?; // should not happen since this struct is setting the proper scheme
 
         // Read the key from cache
         let handle = self.cache.try_read()
@@ -211,10 +226,7 @@ impl TpmStorage {
         }
 
         // Hash the message with the required algorithm
-        let mut digest = [0u8; crypto::hashes::sha::SHA256_LEN];
-        crypto::hashes::sha::SHA256(data, &mut digest);
-        let hash = Digest::from_bytes(digest.as_slice())
-        .map_err(|e| {TpmStorageError::UnexpectedBehaviour(e.to_string())})?;
+        let hash = Self::hash(data, scheme.signing_scheme()?)?;
         
         // Sign
         let signature = ctx.execute_with_session(*self.session, |context| {

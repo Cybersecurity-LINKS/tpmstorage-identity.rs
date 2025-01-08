@@ -92,7 +92,9 @@ impl TpmStorage{
             TpmStorageError::BadInput(BadInput::Jwk) => (KeyStorageErrorKind::Unspecified, Some(TpmStorageError::BadInput(BadInput::Jwk).to_string())),
             TpmStorageError::BadInput(BadInput::SignatureAlgorithm) => (KeyStorageErrorKind::UnsupportedSignatureAlgorithm, None),
             TpmStorageError::UnexpectedBehaviour(mes) => (KeyStorageErrorKind::Unspecified, Some(mes)),
-            TpmStorageError::SignatureError(mes) => (KeyStorageErrorKind::RetryableIOFailure, Some(mes))
+            TpmStorageError::SignatureError(mes) => (KeyStorageErrorKind::RetryableIOFailure, Some(mes)),
+            TpmStorageError::Unsupported(mes) => (KeyStorageErrorKind::Unspecified, Some(mes)),
+            TpmStorageError::TSSError(error) => (KeyStorageErrorKind::Unspecified, Some(error.to_string())),
         };
 
         let mut error = KeyStorageError::new(kind);

@@ -9,7 +9,8 @@ publish = false
 anyhow = "1.0.62"
 bls12_381_plus.workspace = true
 identity_eddsa_verifier = { path = "../identity_eddsa_verifier", default-features = false }
-identity_iota = { path = "../identity_iota", default-features = false, features = ["iota-client", "client", "memstore", "domain-linkage", "revocation-bitmap", "status-list-2021"] }
+identity_ecdsa_verifier = { path = "../identity_ecdsa_verifier", default-features = false, features = ["es256"] }
+identity_iota = { path = "../identity_iota", default-features = false, features = ["iota-client", "client", "memstore", "domain-linkage", "revocation-bitmap", "status-list-2021", "resolver"] }
 identity_stronghold = { path = "../identity_stronghold", default-features = false }
 identity_storage_tpm = { path = "../identity_storage_tpm" }
 iota-sdk = { version = "1.0", default-features = false, features = ["tls", "client", "stronghold"] }
@@ -95,18 +96,6 @@ name = "7_sd_jwt"
 [[example]]
 path = "1_advanced/8_status_list_2021.rs"
 name = "8_status_list_2021"
-
-[[example]]
-path = "1_advanced/9_zkp.rs"
-name = "9_zkp"
-
-[[example]]
-path = "1_advanced/10_zkp_revocation.rs"
-name = "10_zkp_revocation"
-
-[[example]]
-path = "1_advanced/11_linked_verifiable_presentation.rs"
-name = "11_linked_verifiable_presentation"
 
 [[example]]
 path = "1_advanced/9_zkp.rs"
