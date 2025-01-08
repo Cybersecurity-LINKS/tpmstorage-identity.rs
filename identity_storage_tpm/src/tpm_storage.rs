@@ -4,7 +4,7 @@ use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
 use tss_esapi::{attributes::ObjectAttributes, constants::SessionType, handles::{KeyHandle, ObjectHandle}, 
 interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, reserved_handles::Hierarchy, session_handles::AuthSession}, 
-structures::{Digest, EccParameter, EccPoint, EccScheme, HashScheme, MaxBuffer, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, 
+structures::{Digest, EccParameter, EccPoint, EccScheme, HashScheme, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, 
 utils::PublicKey, Context};
 
 use crate::error::{BadInput, TpmStorageError};
