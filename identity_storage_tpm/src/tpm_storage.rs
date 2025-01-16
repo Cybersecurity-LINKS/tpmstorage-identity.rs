@@ -2,10 +2,7 @@ use std::{collections::HashMap, sync::{Arc, Mutex, MutexGuard, RwLock}};
 
 use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
-use tss_esapi::{attributes::ObjectAttributes, constants::SessionType, handles::{KeyHandle, ObjectHandle}, 
-interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, reserved_handles::Hierarchy, session_handles::AuthSession}, 
-structures::{Digest, EccParameter, EccPoint, EccScheme, HashScheme, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, 
-utils::PublicKey, Context};
+use tss_esapi::{abstraction::AsymmetricAlgorithmSelection, attributes::ObjectAttributes, constants::SessionType, handles::{KeyHandle, ObjectHandle, PersistentTpmHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, reserved_handles::Hierarchy, session_handles::AuthSession}, structures::{Digest, EccParameter, EccPoint, EccScheme, HashScheme, IdObject, Name, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, traits::{Marshall, UnMarshall}, utils::PublicKey, Context};
 
 use crate::error::{BadInput, TpmStorageError};
 
@@ -72,6 +69,38 @@ impl TpmStorage {
                 KeyStorageErrorKind::KeyAlgorithmMismatch
             ).with_custom_message(format!("Cannot use keytype {key_type} with algorithm {alg}")))
         }
+    }
+
+    /// Retrieve EK certificate stored in the NV index
+    pub fn ek_certificate(&self)-> Result<Vec<u8>, TpmStorageError> {
+        let mut ctx =  self.get_context()?;
+        let cert = tss_esapi::abstraction::ek::retrieve_ek_pubcert(&mut ctx, AsymmetricAlgorithmSelection::Ecc(EccCurve::NistP256))?;
+        Ok(cert)
+    }
+
+    // Create challenge for client TPM
+    pub fn make_credential(&self, ek_pub: &[u8], obj_name: &[u8], secret: &[u8]) -> Result<(Vec<u8>, Vec<u8>), TpmStorageError>
+    {
+        let mut ctx =  self.get_context()?;
+        let ek_pub = Public::unmarshall(ek_pub)?;
+        let obj_name = Name::try_from(Vec::from(obj_name))?;
+        let credential = Digest::from_bytes(secret)?;
+
+        let handle = ctx.load_external_public(ek_pub, Hierarchy::Null)?;
+        let credential_result = ctx.make_credential(handle, credential, obj_name)?;
+
+        Ok((credential_result.0.to_vec(), credential_result.1.to_vec()))
+    }
+
+    /// Retrieve EK public part
+    pub fn read_public(&self, handle: u32) -> Result<Vec<u8>, TpmStorageError>{
+        let mut ctx =  self.get_context()?;
+        
+        ctx.execute_with_nullauth_session(|context| {
+            let handle = context.tr_from_tpm_public(TpmHandle::Persistent(PersistentTpmHandle::new(handle)?))?;
+            let (public, _, _) = context.read_public(handle.into())?;
+            Ok(public.marshall()?)
+        })
     }
 
     /// Read the name of a TPM Object. 
@@ -269,6 +298,7 @@ impl TpmStorage {
             .map_err(|_| {TpmStorageError::UnexpectedBehaviour("Cannot access cache".to_owned())})
             .and_then(|cache| {Ok(cache.contains_key(key_id))})
     }
+
 }
 
 

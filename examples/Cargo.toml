@@ -21,6 +21,7 @@ sd-jwt-payload = { version = "0.2.1", default-features = false, features = ["sha
 serde_json = { version = "1.0", default-features = false }
 tokio = { version = "1.29", default-features = false, features = ["rt"] }
 tss-esapi.workspace = true
+hex = "0.4.3"
 
 [lib]
 path = "utils/utils.rs"
