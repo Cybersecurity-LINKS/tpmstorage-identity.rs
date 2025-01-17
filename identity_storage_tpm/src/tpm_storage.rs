@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::{Arc, Mutex, MutexGuard, RwLock}};
 
 use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
-use tss_esapi::{abstraction::AsymmetricAlgorithmSelection, attributes::ObjectAttributes, constants::SessionType, handles::{KeyHandle, ObjectHandle, PersistentTpmHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, reserved_handles::Hierarchy, session_handles::AuthSession}, structures::{Digest, EccParameter, EccPoint, EccScheme, HashScheme, IdObject, Name, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, traits::{Marshall, UnMarshall}, utils::PublicKey, Context};
+use tss_esapi::{abstraction::AsymmetricAlgorithmSelection, attributes::{ObjectAttributes, SessionAttributesBuilder}, constants::SessionType, handles::{AuthHandle, KeyHandle, ObjectHandle, PersistentTpmHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, reserved_handles::Hierarchy, session_handles::{AuthSession, PolicySession}}, structures::{Digest, EccParameter, EccPoint, EccScheme, EncryptedSecret, HashScheme, IdObject, Name, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, traits::{Marshall, UnMarshall}, utils::PublicKey, Context};
 
 use crate::error::{BadInput, TpmStorageError};
 
@@ -76,6 +76,71 @@ impl TpmStorage {
         let mut ctx =  self.get_context()?;
         let cert = tss_esapi::abstraction::ek::retrieve_ek_pubcert(&mut ctx, AsymmetricAlgorithmSelection::Ecc(EccCurve::NistP256))?;
         Ok(cert)
+    }
+
+    pub fn activate_credential(&self, ek_handle: u32, activated_key: KeyId, id_obj: &[u8], enc_sec: &[u8]) -> Result<Vec<u8>, TpmStorageError>{
+        let mut ctx =  self.get_context()?;
+        let cache = self.cache.try_read()
+        .map_err(|_| {TpmStorageError::UnexpectedBehaviour("Cannot access cache".to_owned())})?;
+        
+        // load EK
+        let handle = ctx.tr_from_tpm_public(TpmHandle::Persistent(PersistentTpmHandle::new(ek_handle)?))?;
+
+        // load key to verify
+        let obj_handle = cache.get(&activated_key).ok_or(TpmStorageError::KeyNotFound)?;
+
+        // parse make credential result
+        let id_obj = IdObject::from_bytes(id_obj)?;
+        let enc_sec = EncryptedSecret::from_bytes(enc_sec)?;
+
+        // authenticate session for key to activate
+        let session = ctx.start_auth_session
+            (None, 
+                None,
+                None,
+                SessionType::Hmac,
+                SymmetricDefinition::AES_128_CFB,
+                HashingAlgorithm::Sha256)?
+            .ok_or(TpmStorageError::UnexpectedBehaviour("Cannot generate a session".to_owned()))?;
+
+        let (session_attributes, session_attributes_mask) = SessionAttributesBuilder::new()
+        .with_decrypt(true)
+        .with_encrypt(true)
+        .build();
+
+        ctx.tr_sess_set_attributes(session, session_attributes, session_attributes_mask)?;
+
+        // session for endorsement
+
+        let (session_attributes, session_attributes_mask) = SessionAttributesBuilder::new().build();
+        let policy_auth_session = ctx
+        .start_auth_session(
+            None,
+            None,
+            None,
+            SessionType::Policy,
+            SymmetricDefinition::AES_128_CFB,
+            HashingAlgorithm::Sha256,
+        )?
+        .ok_or(TpmStorageError::UnexpectedBehaviour("Cannot generate a session".to_owned()))?;
+
+
+        ctx.tr_sess_set_attributes(policy_auth_session, session_attributes, session_attributes_mask)?;
+        ctx.execute_with_nullauth_session(|context| {
+            context.policy_secret(
+                PolicySession::try_from(policy_auth_session)?,
+                AuthHandle::Endorsement,
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                None)
+        })?;
+        // solve the challenge
+        let secret = ctx.execute_with_sessions((*self.session, Some(policy_auth_session), None), |context|
+             context.activate_credential(obj_handle.clone().into(), handle.into(), id_obj, enc_sec))?
+             .to_vec();
+        
+        Ok(secret)
     }
 
     // Create challenge for client TPM

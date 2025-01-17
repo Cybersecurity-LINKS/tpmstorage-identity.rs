@@ -30,6 +30,8 @@ use identity_iota::storage::JwkDocumentExt;
 use identity_iota::storage::JwkMemStore;
 use identity_iota::storage::JwsSignatureOptions;
 use identity_iota::storage::KeyIdMemstore;
+use identity_iota::storage::KeyIdStorage;
+use identity_iota::storage::MethodDigest;
 use identity_storage_tpm::tpm_storage::TpmStorage;
 use iota_sdk::client::secret::stronghold::StrongholdSecretManager;
 use iota_sdk::client::secret::SecretManager;
@@ -54,8 +56,7 @@ use identity_iota::credential::SubjectHolderRelationship;
 use identity_iota::did::DID;
 use identity_iota::iota::IotaDocument;
 use identity_iota::resolver::Resolver;
-use rand::RngCore;
-use tss_esapi::tcti_ldr::TpmSimulatorConfig;
+use tss_esapi::tcti_ldr::TabrmdConfig;
 use tss_esapi::Tcti;
 
 #[tokio::main]
@@ -87,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
       .build(random_stronghold_path())?,
   );
   
-  let tpm = tss_esapi::Context::new(Tcti::Mssim(TpmSimulatorConfig::default()))?;
+  let tpm = tss_esapi::Context::new(Tcti::Tabrmd(TabrmdConfig::default()))?;
   let storage_alice = examples::tpm_utils::TpmIdentityStorage::new(
     TpmStorage::new(tpm)?,
     KeyIdMemstore::new());
@@ -98,6 +99,8 @@ async fn main() -> anyhow::Result<()> {
   // ===========================================================================
   // Step 2: Issuer creates and signs a Verifiable Credential.
   // ===========================================================================
+
+  // Privacy CA should check EK certificate 
 
   // Create a credential subject indicating the degree earned by Alice.
   let subject: Subject = Subject::from_json_value(json!({
@@ -147,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
   // ===========================================================================
   // Step 3: Issuer sends the Verifiable Credential to the holder.
   // ===========================================================================
+  
   println!("Sending credential (as JWT) to the holder: {credential:#}");
   let ek_address = 0x81010001;
   /* Issuer receives EK pub and TPM object name from the "client" TPM.
@@ -169,18 +173,26 @@ async fn main() -> anyhow::Result<()> {
   println!("Name: {}", name);
   
   // 2. Generate a secret key 
-  let mut secret_key: [u8;32] = [0;32];
-  rand::thread_rng().fill_bytes(&mut secret_key);
+  let secret_key= b"475a7984-1bb5-4c4c-a56f-822bccd46440";
   
   //3. Encrypt VC with the key
   
   //4. Protect the key with MakeCredential
   let make_credential_result = storage_alice.key_storage()
-    .make_credential(&marshalled_public, &name_bytes, &secret_key)?;
+    .make_credential(&marshalled_public, &name_bytes, secret_key)?;
   println!("Make credential result {:?}", make_credential_result);
 
   // 5. holder completes the challenge and unlocks the credential
+  // 5.1 Get the keyId from storage
+  let alice_vm = alice_document.methods(None)[0];
+  let key_id = storage_alice.key_id_storage().get_key_id(&MethodDigest::new(alice_vm)?).await?;
+  // 5.2 Holder solves the challenge and send it back to the issuer
+  let secret = storage_alice
+    .key_storage()
+    .activate_credential(ek_address, key_id, &make_credential_result.0, &make_credential_result.1)?;
   
+  // 6. Issuer receives the challenge and verifies. Credential can be sent to the holder
+  assert_eq!(secret, secret_key);
 
   // ===========================================================================
   // Step 4: Verifier sends the holder a challenge and requests a signed Verifiable Presentation.
@@ -272,7 +284,7 @@ async fn main() -> anyhow::Result<()> {
   }
 
   // Since no errors were thrown by `verify_presentation` we know that the validation was successful.
-  println!("VP successfully validated: {:#?}", presentation.presentation);
+  println!("VP successfully validated: {:#?}", presentation);
 
   // Note that we did not declare a latest allowed issuance date for credentials. This is because we only want to check
   // that the credentials do not have an issuance date in the future which is a default check.
