@@ -100,8 +100,13 @@ async fn main() -> anyhow::Result<()> {
   // Step 2: Issuer creates and signs a Verifiable Credential.
   // ===========================================================================
 
-  // Privacy CA should check EK certificate 
+  // 2.1 - Issuer receives EKCert from the holder
 
+  // 2.2 - Issuer (as a Privacy CA) validate certificate chain
+  //let certificate = storage_alice.key_storage().ek_certificate();
+
+  // 2.3 - Issuer issues a Verifiable Credential for Alice
+  
   // Create a credential subject indicating the degree earned by Alice.
   let subject: Subject = Subject::from_json_value(json!({
     "id": alice_document.id().as_str(),
@@ -152,16 +157,25 @@ async fn main() -> anyhow::Result<()> {
   // ===========================================================================
   
   println!("Sending credential (as JWT) to the holder: {credential:#}");
+  // ===========================================================================
+  // HOLDER OPERATIONS
+  // ===========================================================================
   let ek_address = 0x81010001;
-  /* Issuer receives EK pub and TPM object name from the "client" TPM.
-    - The EK Pub is sent directly to the Issuer (can be done iff the issuer is a Privacy CA)
-    - The Key object name to be verified is contained in the DID Document resolved by the issuer
-   */
+  // 3.1H Holder sends to the issuer the public part of the Endorsement Key
   let marshalled_public = storage_alice
     .key_storage()
     .read_public(ek_address)?;
-  
   let public_hex = hex::encode(marshalled_public.clone());
+
+  // ===========================================================================
+  // ISSUER OPERATIONS
+  // ===========================================================================  
+
+  // 3.1I Issuer receives EK pub and TPM object name from the "client" TPM.
+  //  - The EK Pub is sent directly to the Issuer (can be done iff the issuer is a Privacy CA)
+  //  - The Key object name to be verified is contained in the DID Document resolved by the issuer
+  
+  // 3.2I Retrieve Tpm Object name for the key stored in the DID Document (ID field of the public Jwk)
 
   // The key to verify contains the name in the key id
   let name = alice_document.methods(None)[0].data()
@@ -172,27 +186,42 @@ async fn main() -> anyhow::Result<()> {
   println!("EK public: {}", public_hex);
   println!("Name: {}", name);
   
-  // 2. Generate a secret key 
+  // 3.3I Issuer generate a nonce for the holder
   let secret_key= b"475a7984-1bb5-4c4c-a56f-822bccd46440";
   
-  //3. Encrypt VC with the key
-  
-  //4. Protect the key with MakeCredential
+  // 3.4I Issuer generates a challenge using MakeCredential operation.
+  // This challenge can be solved if both of the condition are satisfied:
+  // - Holder's TPM has the Endorsement Key corresponding to EKPub
+  // - Holder's TPM has a loaded key object with the same name of the key name found in the DID document
   let make_credential_result = storage_alice.key_storage()
     .make_credential(&marshalled_public, &name_bytes, secret_key)?;
   println!("Make credential result {:?}", make_credential_result);
 
-  // 5. holder completes the challenge and unlocks the credential
-  // 5.1 Get the keyId from storage
+  // ===========================================================================
+  // HOLDER OPERATIONS
+  // ===========================================================================  
+
+  // 3.5H Holder receives the challenge from the Issuer
+
+  // 3.6H Folder finds the keyId that corresponds to the Verification Method in the DID Document
   let alice_vm = alice_document.methods(None)[0];
   let key_id = storage_alice.key_id_storage().get_key_id(&MethodDigest::new(alice_vm)?).await?;
-  // 5.2 Holder solves the challenge and send it back to the issuer
+
+  // 3.7H Holder solves the challenge
   let secret = storage_alice
     .key_storage()
     .activate_credential(ek_address, key_id, &make_credential_result.0, &make_credential_result.1)?;
   
-  // 6. Issuer receives the challenge and verifies. Credential can be sent to the holder
+  // 3.8H Holder sends the nonce to the Issuer
+
+  // ===========================================================================
+  // ISSUER OPERATIONS
+  // ===========================================================================  
+  
+  //3.9I Issuer verifies the challenge
   assert_eq!(secret, secret_key);
+  
+  // 3.10I Challenge verified. Issuer can send the VC to the holder
 
   // ===========================================================================
   // Step 4: Verifier sends the holder a challenge and requests a signed Verifiable Presentation.
