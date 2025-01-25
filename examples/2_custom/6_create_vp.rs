@@ -187,14 +187,14 @@ async fn main() -> anyhow::Result<()> {
   println!("Name: {}", name);
   
   // 3.3I Issuer generate a nonce for the holder
-  let secret_key= b"475a7984-1bb5-4c4c-a56f-822bccd46440";
+  let secret_key: [u8;32]= rand::random();
   
   // 3.4I Issuer generates a challenge using MakeCredential operation.
   // This challenge can be solved if both of the condition are satisfied:
   // - Holder's TPM has the Endorsement Key corresponding to EKPub
   // - Holder's TPM has a loaded key object with the same name of the key name found in the DID document
   let make_credential_result = storage_alice.key_storage()
-    .make_credential(&marshalled_public, &name_bytes, secret_key)?;
+    .make_credential(&marshalled_public, &name_bytes, &secret_key)?;
   println!("Make credential result {:?}", make_credential_result);
 
   // ===========================================================================
