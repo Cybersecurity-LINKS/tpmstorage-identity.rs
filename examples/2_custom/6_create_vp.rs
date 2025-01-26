@@ -104,8 +104,8 @@ async fn main() -> anyhow::Result<()> {
   // 2.1 - Issuer receives EKCert from the holder
 
   // 2.2 - Issuer (as a Privacy CA) validate certificate chain
-  //let certificate = storage_alice.key_storage().ek_certificate();
-  //let ek_public = tpm_utils::tpm_public_from_cert(certificate);
+  //let certificate = storage_alice.key_storage().ek_certificate()?;
+  //let ek_public = tpm_utils::tpm_public_from_cert(&certificate)?;
 
 
   // 2.3 - Issuer issues a Verifiable Credential for Alice
