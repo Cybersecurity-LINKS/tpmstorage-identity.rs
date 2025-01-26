@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-
+use anyhow::anyhow;
 use identity_iota::iota::block::output::AliasOutput;
 use identity_iota::iota::IotaClientExt;
 use identity_iota::iota::IotaDocument;
@@ -19,6 +19,31 @@ use identity_storage_tpm::tpm_storage::TpmStorage;
 use iota_sdk::client::secret::SecretManager;
 use iota_sdk::client::Client;
 use iota_sdk::types::block::address::Address;
+use p256::elliptic_curve::sec1::ToEncodedPoint;
+use tss_esapi::attributes::ObjectAttributesBuilder;
+use tss_esapi::interface_types::ecc::EccCurve;
+use tss_esapi::structures::Digest;
+use tss_esapi::structures::EccParameter;
+use tss_esapi::structures::EccPoint;
+use tss_esapi::structures::EccScheme;
+use tss_esapi::structures::KeyDerivationFunctionScheme;
+use tss_esapi::structures::Public;
+use tss_esapi::structures::PublicBuilder;
+use tss_esapi::structures::PublicEccParameters;
+use tss_esapi::structures::SymmetricDefinitionObject;
+use x509_cert::certificate::CertificateInner;
+use x509_cert::certificate::Rfc5280;
+use x509_cert::der::Decode;
+
+const AUTH_POLICY_DIGEST_SHA_256 : [u8;32] = 
+[
+  0x83, 0x71, 0x97, 0x67, 0x44, 0x84,
+  0xB3, 0xF8, 0x1A, 0x90, 0xCC, 0x8D,
+  0x46, 0xA5, 0xD7, 0x24, 0xFD, 0x52,
+  0xD7, 0x6E, 0x06, 0x52, 0x0B, 0x64,
+  0xF2, 0xA1, 0xDA, 0x1B, 0x33, 0x14,
+  0x69, 0xAA
+];
 
 pub type TpmIdentityStorage = Storage<TpmStorage, KeyIdMemstore>;
 
@@ -67,4 +92,81 @@ pub async fn create_did_document(
     .await?;
 
   Ok((document, fragment))
+}
+
+/// Reads an EK certificate in der format and builds the correspondant TPM2_PUBLIC struct
+/// 
+/// Currently only default template and ECC-P256 is supported
+/// Ref: https://trustedcomputinggroup.org/wp-content/uploads/EK-Credential-Profile-For-TPM-Family-2.0-Level-0-V2.5-R1.0_28March2022.pdf
+pub fn tpm_public_from_cert(der_certificate : &[u8]) -> anyhow::Result<Public>{
+  
+  // decode der certificate
+  let certificate = CertificateInner::<Rfc5280>::from_der(der_certificate)?;
+  let cert_data = certificate.tbs_certificate;
+  let pub_key_info = cert_data.subject_public_key_info;
+  
+  // Check algorithm (based on Rfc5480)
+  let alg = pub_key_info.algorithm;
+
+  if alg.oid.to_string().ne("1.2.840.10045.2.1"){
+    return Err(anyhow!("Not an elliptic curve"));
+  }
+
+  let ecc_curve = alg.parameters
+    .ok_or(anyhow!("Named curve parameter not found"))?
+    .decode_as::<x509_cert::spki::ObjectIdentifier>()?;
+
+  // check that secp256r1 curve is being used
+  if ecc_curve.ne(&x509_cert::der::oid::db::rfc5912::SECP_256_R_1){
+    return Err(anyhow!("EC type not supported"))
+  }
+  
+  // read public key 
+  let public_key = p256::PublicKey::from_sec1_bytes(pub_key_info.subject_public_key.raw_bytes())?.to_encoded_point(false);
+  let x = public_key.x()
+    .ok_or(anyhow!("Cannot parse coordinates"))
+    .and_then(|arr| Ok(EccParameter::from_bytes(&arr)?))?;
+  let y = public_key.y()
+    .ok_or(anyhow!("Cannot parse coordinates"))
+    .and_then(|arr| Ok(EccParameter::from_bytes(&arr)?))?;
+
+  let ecc_point = EccPoint::new(x, y);
+  
+  // Build the EK default template (Appendix B.3.4)
+  let attributes = ObjectAttributesBuilder::new()
+    .with_fixed_tpm(true)
+    .with_fixed_parent(true)
+    .with_sensitive_data_origin(true)
+    .with_admin_with_policy(true)
+    .with_restricted(true)
+    .with_decrypt(true)
+    .build()?;
+
+  let ecc_params = PublicEccParameters::new(
+    SymmetricDefinitionObject::AES_128_CFB,
+    EccScheme::Null,
+    EccCurve::NistP256,
+    KeyDerivationFunctionScheme::Null);
+
+  Ok(PublicBuilder::new()
+  .with_auth_policy(Digest::from_bytes(&AUTH_POLICY_DIGEST_SHA_256)?)
+  .with_object_attributes(attributes)
+  .with_ecc_parameters(ecc_params)
+  .with_name_hashing_algorithm(tss_esapi::interface_types::algorithm::HashingAlgorithm::Sha256)
+  .with_ecc_unique_identifier(ecc_point)
+  .with_public_algorithm(tss_esapi::interface_types::algorithm::PublicAlgorithm::Ecc)
+  .build()?)
+
+}
+
+#[cfg(test)]
+mod tests{
+
+  #[test]
+  fn test_public_from_cert(){
+    use super::tpm_public_from_cert;
+
+    let certificate = include_bytes!("ek.der");
+    tpm_public_from_cert(certificate).unwrap();
+  }
 }
