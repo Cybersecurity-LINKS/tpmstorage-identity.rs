@@ -165,10 +165,9 @@ async fn main() -> anyhow::Result<()> {
   // ===========================================================================
   let ek_address = 0x81010001;
   // 3.1H Holder sends to the issuer the public part of the Endorsement Key
-  let marshalled_public = storage_alice
+  let ek_public = storage_alice
     .key_storage()
     .read_public(ek_address)?;
-  let public_hex = hex::encode(marshalled_public.clone());
 
   // ===========================================================================
   // ISSUER OPERATIONS
@@ -186,7 +185,7 @@ async fn main() -> anyhow::Result<()> {
     .kid().unwrap();
   let name_bytes = hex::decode(name)?;
 
-  println!("EK public: {}", public_hex);
+  println!("EK public: {:?}", ek_public);
   println!("Name: {}", name);
   
   // 3.3I Issuer generate a nonce for the holder
@@ -197,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
   // - Holder's TPM has the Endorsement Key corresponding to EKPub
   // - Holder's TPM has a loaded key object with the same name of the key name found in the DID document
   let make_credential_result = storage_alice.key_storage()
-    .make_credential(&marshalled_public, &name_bytes, &secret_key)?;
+    .make_credential(ek_public, &name_bytes, &secret_key)?;
   println!("Make credential result {:?}", make_credential_result);
 
   // ===========================================================================

@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::{Arc, Mutex, MutexGuard, RwLock}};
 
 use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
 use identity_storage::{KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
-use tss_esapi::{abstraction::AsymmetricAlgorithmSelection, attributes::{ObjectAttributes, SessionAttributesBuilder}, constants::SessionType, handles::{AuthHandle, KeyHandle, ObjectHandle, PersistentTpmHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, reserved_handles::Hierarchy, session_handles::{AuthSession, PolicySession}}, structures::{Digest, EccParameter, EccPoint, EccScheme, EncryptedSecret, HashScheme, IdObject, Name, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, traits::{Marshall, UnMarshall}, utils::PublicKey, Context};
+use tss_esapi::{abstraction::AsymmetricAlgorithmSelection, attributes::{ObjectAttributes, SessionAttributesBuilder}, constants::SessionType, handles::{AuthHandle, KeyHandle, ObjectHandle, PersistentTpmHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, reserved_handles::Hierarchy, session_handles::{AuthSession, PolicySession}}, structures::{Digest, EccParameter, EccPoint, EccScheme, EncryptedSecret, HashScheme, IdObject, Name, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, utils::PublicKey, Context};
 
 use crate::error::{BadInput, TpmStorageError};
 
@@ -144,10 +144,9 @@ impl TpmStorage {
     }
 
     // Create challenge for client TPM
-    pub fn make_credential(&self, ek_pub: &[u8], obj_name: &[u8], secret: &[u8]) -> Result<(Vec<u8>, Vec<u8>), TpmStorageError>
+    pub fn make_credential(&self, ek_pub: Public, obj_name: &[u8], secret: &[u8]) -> Result<(Vec<u8>, Vec<u8>), TpmStorageError>
     {
         let mut ctx =  self.get_context()?;
-        let ek_pub = Public::unmarshall(ek_pub)?;
         let obj_name = Name::try_from(Vec::from(obj_name))?;
         let credential = Digest::from_bytes(secret)?;
 
@@ -158,13 +157,13 @@ impl TpmStorage {
     }
 
     /// Retrieve EK public part
-    pub fn read_public(&self, handle: u32) -> Result<Vec<u8>, TpmStorageError>{
+    pub fn read_public(&self, handle: u32) -> Result<Public, TpmStorageError>{
         let mut ctx =  self.get_context()?;
         
         ctx.execute_with_nullauth_session(|context| {
             let handle = context.tr_from_tpm_public(TpmHandle::Persistent(PersistentTpmHandle::new(handle)?))?;
             let (public, _, _) = context.read_public(handle.into())?;
-            Ok(public.marshall()?)
+            Ok(public)
         })
     }
 
