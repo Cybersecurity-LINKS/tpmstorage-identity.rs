@@ -97,7 +97,7 @@ pub async fn create_did_document(
 /// Reads an EK certificate in der format and builds the correspondant TPM2_PUBLIC struct
 /// 
 /// Currently only default template and ECC-P256 is supported
-/// Ref: https://trustedcomputinggroup.org/wp-content/uploads/EK-Credential-Profile-For-TPM-Family-2.0-Level-0-V2.5-R1.0_28March2022.pdf
+/// Ref: https://trustedcomputinggroup.org/wp-content/uploads/TCG-EK-Credential-Profile-for-TPM-Family-2.0-Level-0-Version-2.6_pub.pdf
 pub fn tpm_public_from_cert(der_certificate : &[u8]) -> anyhow::Result<Public>{
   
   // decode der certificate
