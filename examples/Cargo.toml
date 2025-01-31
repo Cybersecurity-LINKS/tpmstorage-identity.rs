@@ -24,6 +24,7 @@ tss-esapi.workspace = true
 hex = "0.4.3"
 x509-cert = "0.2.5"
 p256 = "0.13.2"
+openssl = "0.10.69"
 
 [lib]
 path = "utils/utils.rs"

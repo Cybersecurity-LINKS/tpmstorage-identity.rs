@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
   
   let (_, alice_document, fragment_alice): (Address, IotaDocument, String) =
     examples::tpm_utils::create_did(&client, &mut secret_manager_alice, &storage_alice).await?;
-
+  
   // ===========================================================================
   // Step 2: Issuer creates and signs a Verifiable Credential.
   // ===========================================================================
@@ -105,6 +105,8 @@ async fn main() -> anyhow::Result<()> {
 
   // 2.2 - Issuer (as a Privacy CA) validate certificate chain
   //let certificate = storage_alice.key_storage().ek_certificate()?;
+  //tpm_utils::verify_certificate_tpm(&certificate)?;
+  //println!("TPM EK certificate verified");
   //let ek_public = tpm_utils::tpm_public_from_cert(&certificate)?;
 
 

@@ -19,6 +19,7 @@ use identity_storage_tpm::tpm_storage::TpmStorage;
 use iota_sdk::client::secret::SecretManager;
 use iota_sdk::client::Client;
 use iota_sdk::types::block::address::Address;
+use openssl::stack::Stack;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use tss_esapi::attributes::ObjectAttributesBuilder;
 use tss_esapi::interface_types::ecc::EccCurve;
@@ -159,8 +160,34 @@ pub fn tpm_public_from_cert(der_certificate : &[u8]) -> anyhow::Result<Public>{
 
 }
 
+/// Verify TPM EK Cert with trusted root certificates
+/// 
+pub fn verify_certificate_tpm(der_certificate : &[u8]) -> anyhow::Result<()>{
+  let root_ca = openssl::x509::X509::from_der(include_bytes!("OptigaEccRootCA.der"))?;
+  let intermediate = openssl::x509::X509::from_der(include_bytes!("IntermediateCA.der"))?;
+  let end_entity = openssl::x509::X509::from_der(der_certificate)?;
+
+  let mut stack = Stack::new()?;
+  stack.push(intermediate)?;
+
+  let mut store = openssl::x509::store::X509StoreBuilder::new()?;
+  store.add_cert(root_ca)?;
+  let store = store.build();
+
+  let mut store_ctx = openssl::x509::X509StoreContext::new()?;
+  store_ctx.init(&store, &end_entity, &stack, |ctx|
+    {
+      ctx.verify_cert()
+    })?
+    .then_some(())
+    .ok_or(anyhow!("Signature verification error"))?;
+
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests{
+
 
   #[test]
   fn test_public_from_cert(){
@@ -168,5 +195,13 @@ mod tests{
 
     let certificate = include_bytes!("ek.der");
     tpm_public_from_cert(certificate).unwrap();
+  }
+
+  #[test]
+  fn test_verify_cert(){
+    use super::verify_certificate_tpm;
+
+    let certificate = include_bytes!("ek.der");
+    verify_certificate_tpm(certificate).unwrap();
   }
 }
