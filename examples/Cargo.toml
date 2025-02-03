@@ -122,3 +122,10 @@ name = "5_create_vc_tpm"
 [[example]]
 path = "2_custom/6_create_vp.rs"
 name = "6_create_vp_tpm"
+
+[dev-dependencies]
+criterion = {version = "0.5.1", features = ["async_tokio", "html_reports", "csv_output"]}
+
+[[bench]]
+name = "keygen"
+harness = false
