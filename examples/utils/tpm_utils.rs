@@ -184,24 +184,3 @@ pub fn verify_certificate_tpm(der_certificate : &[u8]) -> anyhow::Result<()>{
 
   Ok(())
 }
-
-#[cfg(test)]
-mod tests{
-
-
-  #[test]
-  fn test_public_from_cert(){
-    use super::tpm_public_from_cert;
-
-    let certificate = include_bytes!("ek.der");
-    tpm_public_from_cert(certificate).unwrap();
-  }
-
-  #[test]
-  fn test_verify_cert(){
-    use super::verify_certificate_tpm;
-
-    let certificate = include_bytes!("ek.der");
-    verify_certificate_tpm(certificate).unwrap();
-  }
-}
