@@ -142,7 +142,6 @@ impl TpmStorage {
         
         Ok(secret)
     }
-
     // Create challenge for client TPM
     pub fn make_credential(&self, ek_pub: Public, obj_name: &[u8], secret: &[u8]) -> Result<(Vec<u8>, Vec<u8>), TpmStorageError>
     {

@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod tpm_utils;
-
+pub mod stronghold_utils;
+use std::fmt::Display;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context;
 
@@ -28,6 +30,8 @@ use iota_sdk::types::block::address::Address;
 use iota_sdk::types::block::address::Bech32Address;
 use iota_sdk::types::block::address::Hrp;
 use rand::distributions::DistString;
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 
 pub static API_ENDPOINT: &str = "https://api.tangle.stardust.linksfoundation.com/";
@@ -49,7 +53,7 @@ pub async fn create_did(
     .context("failed to get address with funds")?;
 
   let network_name: NetworkName = client.network_name().await?;
-
+  println!("NETWORK NAME {:?}", network_name);
   let (document, fragment): (IotaDocument, String) = create_did_document(&network_name, storage).await?;
 
   let alias_output: AliasOutput = client.new_did_output(address, document, None).await?;
@@ -186,4 +190,45 @@ pub fn pretty_print_json(label: &str, value: &str) {
   println!("{}:", label);
   println!("--------------------------------------");
   println!("{} \n", pretty_json);
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BenchmarkMeasurement{
+  test_name: TestName,
+  storage_type: StorageType,
+  duration: Duration
+}
+
+impl BenchmarkMeasurement{
+  pub fn new(test_name: TestName, storage_type: StorageType, duration: Duration) -> BenchmarkMeasurement{
+    BenchmarkMeasurement {test_name, storage_type, duration}
+  }
+
+  pub fn as_row(&self) -> [String; 3]{
+    [self.test_name.to_string(), self.storage_type.to_string(), self.duration.as_nanos().to_string()]
+  }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum TestName{
+  Keygen
+}
+
+impl Display for TestName{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f,"{:?}", self)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum StorageType{
+  Memstore,
+  Stronghold,
+  Tpm
+}
+
+impl Display for StorageType{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      write!(f,"{:?}", self)
+  }
 }

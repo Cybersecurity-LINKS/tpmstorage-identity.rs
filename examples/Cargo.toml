@@ -25,6 +25,8 @@ hex = "0.4.3"
 x509-cert = "0.2.5"
 p256 = "0.13.2"
 openssl = "0.10.69"
+csv = "1.3.1"
+serde.workspace = true
 
 [lib]
 path = "utils/utils.rs"
@@ -113,6 +115,7 @@ name = "10_zkp_revocation"
 path = "1_advanced/11_linked_verifiable_presentation.rs"
 name = "11_linked_verifiable_presentation"
 
+
 # Custom section 
 
 [[example]]
@@ -123,9 +126,15 @@ name = "5_create_vc_tpm"
 path = "2_custom/6_create_vp.rs"
 name = "6_create_vp_tpm"
 
-[dev-dependencies]
-criterion = {version = "0.5.1", features = ["async_tokio", "html_reports", "csv_output"]}
+# Benchmarks
+[[example]]
+path = "3_benchmark/0_keygen_memstore.rs"
+name = "0_keygen_memstore"
 
-[[bench]]
-name = "keygen"
-harness = false
+[[example]]
+path = "3_benchmark/1_keygen_stronghold.rs"
+name = "1_keygen_stronghold"
+
+[[example]]
+path = "3_benchmark/2_keygen_tpm.rs"
+name = "2_keygen_tpm"
