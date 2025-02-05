@@ -3,7 +3,9 @@
 
 pub mod tpm_utils;
 pub mod stronghold_utils;
+use std::collections::VecDeque;
 use std::fmt::Display;
+use std::fs::create_dir_all;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -181,6 +183,17 @@ pub fn random_stronghold_path() -> PathBuf {
   file.push(rand::distributions::Alphanumeric.sample_string(&mut rand::thread_rng(), 32));
   file.set_extension("stronghold");
   file.to_owned()
+}
+
+pub fn write_to_csv(name: TestName, storage: StorageType, measures: VecDeque<Duration>){
+  let test_name = name.to_string().to_lowercase();
+  create_dir_all(format!("results/{test_name}")).expect("Cannot create a directory");
+  let mut csv = csv::WriterBuilder::new()
+    .from_path(format!("results/{}/{}.csv", test_name, storage.to_string().to_ascii_lowercase())).expect("Cannot create file");
+  measures
+    .iter()
+    .map(|time| {BenchmarkMeasurement::new(TestName::Keygen, StorageType::Memstore, *time)})
+    .for_each(|record| { csv.write_record(&record.as_row()).unwrap();});
 }
 
 pub fn pretty_print_json(label: &str, value: &str) {

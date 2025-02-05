@@ -7,6 +7,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use examples::random_stronghold_path;
+use examples::write_to_csv;
 use identity_iota::storage::JwkStorage;  
 use examples::BenchmarkMeasurement;
 use examples::StorageType;
@@ -45,15 +46,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Benchmark completed: store results
-    create_dir_all("results/keygen")?;
-    let mut csv = csv::WriterBuilder::new()
-      .from_path("results/keygen/stronghold.csv")?;
-    results
-      .iter()
-      .map(|time| {BenchmarkMeasurement::new(TestName::Keygen, StorageType::Stronghold, *time)})
-      .for_each(|record| {csv.write_record(&record.as_row()).unwrap();});
-    
-    csv.flush()?;
+    write_to_csv(TestName::Keygen, StorageType::Stronghold, results);
 
   Ok(())
 }

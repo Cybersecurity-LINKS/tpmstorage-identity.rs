@@ -6,6 +6,7 @@ use std::fs::create_dir_all;
 use std::time::Duration;
 use std::time::Instant;
 
+use examples::write_to_csv;
 use examples::BenchmarkMeasurement;
 use examples::StorageType;
 use examples::TestName;
@@ -36,13 +37,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Benchmark completed: store results
-    create_dir_all("results/keygen")?;
-    let mut csv = csv::WriterBuilder::new()
-      .from_path("results/keygen/memstore.csv")?;
-    results
-      .iter()
-      .map(|time| {BenchmarkMeasurement::new(TestName::Keygen, StorageType::Memstore, *time)})
-      .for_each(|record| { csv.write_record(&record.as_row()).unwrap();});
-    
-    Ok(csv.flush()?)
+    write_to_csv(TestName::Keygen, StorageType::Memstore, results);
+    Ok(())
 }
