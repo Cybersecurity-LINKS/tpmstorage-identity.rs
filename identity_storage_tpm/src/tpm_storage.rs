@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::{Arc, Mutex, MutexGuard, RwLock}};
 
-use identity_jose::{jwk::Jwk, jws::JwsAlgorithm};
+use identity_jose::{jwk::Jwk, jws::JwsAlgorithm, jwu::encode_b64};
 use identity_storage::{KeyId, KeyStorageError, KeyStorageErrorKind, KeyStorageResult, KeyType};
 use tss_esapi::{abstraction::AsymmetricAlgorithmSelection, attributes::{ObjectAttributes, SessionAttributesBuilder}, constants::SessionType, handles::{AuthHandle, KeyHandle, ObjectHandle, PersistentTpmHandle, TpmHandle}, interface_types::{algorithm::{HashingAlgorithm, PublicAlgorithm}, ecc::EccCurve, reserved_handles::Hierarchy, session_handles::{AuthSession, PolicySession}}, structures::{Digest, EccParameter, EccPoint, EccScheme, EncryptedSecret, HashScheme, IdObject, Name, Public, PublicBuilder, PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition}, utils::PublicKey, Context};
 
@@ -155,12 +155,27 @@ impl TpmStorage {
         Ok((credential_result.0.to_vec(), credential_result.1.to_vec()))
     }
 
-    /// Retrieve EK public part
-    pub fn read_public(&self, handle: u32) -> Result<Public, TpmStorageError>{
+    /// Retrieve TPM Object public part given a persistent_handle
+    pub fn read_public_from_handle(&self, persistent_handle: u32) -> Result<Public, TpmStorageError>{
         let mut ctx =  self.get_context()?;
         
         ctx.execute_with_nullauth_session(|context| {
-            let handle = context.tr_from_tpm_public(TpmHandle::Persistent(PersistentTpmHandle::new(handle)?))?;
+            let handle = context.tr_from_tpm_public(TpmHandle::Persistent(PersistentTpmHandle::new(persistent_handle)?))?;
+            let (public, _, _) = context.read_public(handle.into())?;
+            Ok(public)
+        })
+    }
+
+    /// Retrieve TPM Object public part given a `KeyId`
+    pub fn read_public_from_key_id(&self, key_id: &KeyId) -> Result<Public, TpmStorageError>{
+        let mut ctx =  self.get_context()?;
+
+        // Read the key from cache
+        let handle = self.cache.try_read()
+        .map_err(|_| {TpmStorageError::UnexpectedBehaviour("Cannot access cache".to_owned())})
+        .and_then(|cache| {cache.get(key_id).ok_or(TpmStorageError::KeyNotFound).copied()})?;
+
+        ctx.execute_with_nullauth_session(|context| {
             let (public, _, _) = context.read_public(handle.into())?;
             Ok(public)
         })
@@ -238,7 +253,7 @@ impl TpmStorage {
                 .map_err(|e|{TpmStorageError::KeyGenerationError(e.to_string())})?;
 
             let name= Self::get_name(ctx, key.key_handle.into())
-                .and_then(|bytes| {Ok(hex::encode(bytes))})?;
+                .and_then(|bytes| {Ok(encode_b64(bytes))})?;
 
             let public_key = PublicKey::try_from(key.out_public)
                 .map_err(|e|{TpmStorageError::KeyGenerationError(e.to_string())})?;
