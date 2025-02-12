@@ -8,9 +8,9 @@
 //! cargo run --release --example 6_create_vp
 
 use std::collections::HashMap;
+use std::io::Write;
 
 use examples::create_did;
-use examples::tpm_utils;
 use examples::MemStorage;
 use identity_ecdsa_verifier::EcDSAJwsVerifier;
 use identity_eddsa_verifier::EdDSAJwsVerifier;
@@ -58,6 +58,7 @@ use identity_iota::did::DID;
 use identity_iota::iota::IotaDocument;
 use identity_iota::resolver::Resolver;
 use tss_esapi::tcti_ldr::TabrmdConfig;
+use tss_esapi::traits::Marshall;
 use tss_esapi::Tcti;
 
 #[tokio::main]
@@ -169,8 +170,8 @@ async fn main() -> anyhow::Result<()> {
   // 3.1H Holder sends to the issuer the public part of the Endorsement Key
   let ek_public = storage_alice
     .key_storage()
-    .read_public(ek_address)?;
-
+    .read_public_from_handle(ek_address)?;
+  
   // ===========================================================================
   // ISSUER OPERATIONS
   // ===========================================================================  
@@ -187,8 +188,17 @@ async fn main() -> anyhow::Result<()> {
     .kid().unwrap();
   let name_bytes = hex::decode(name)?;
 
+  let alice_vm = alice_document.methods(None)[0];
+  let alice_key_id = storage_alice.key_id_storage().get_key_id(&MethodDigest::new(&alice_vm)?).await?;
+  let key_pub = storage_alice.key_storage()
+    .read_public_from_key_id(&alice_key_id)?
+    .marshall()?;
+
   println!("EK public: {:?}", ek_public);
   println!("Name: {}", name);
+  println!("TPM Key Public: {:?}", key_pub);
+  
+  //std::fs::File::create("key_pub.obj")?.write_all(&key_pub)?;
   
   // 3.3I Issuer generate a nonce for the holder
   let secret_key: [u8;32]= rand::random();

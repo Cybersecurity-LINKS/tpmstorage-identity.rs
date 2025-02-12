@@ -3,6 +3,7 @@
 
 pub mod tpm_utils;
 pub mod stronghold_utils;
+pub mod dtos;
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::fs::create_dir_all;
@@ -36,8 +37,11 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
-pub static API_ENDPOINT: &str = "https://api.tangle.stardust.linksfoundation.com/";
-pub static FAUCET_ENDPOINT: &str = "https://faucet.tangle.stardust.linksfoundation.com/api/enqueue";
+pub static API_ENDPOINT: &str = "https://api.testnet.shimmer.network";
+pub static FAUCET_ENDPOINT: &str = "https://faucet.testnet.shimmer.network/api/enqueue";
+
+//pub static API_ENDPOINT: &str = "https://api.tangle.stardust.linksfoundation.com/";
+//pub static FAUCET_ENDPOINT: &str = "https://faucet.tangle.stardust.linksfoundation.com/api/enqueue";
 
 pub type MemStorage = Storage<JwkMemStore, KeyIdMemstore>;
 
@@ -55,7 +59,6 @@ pub async fn create_did(
     .context("failed to get address with funds")?;
 
   let network_name: NetworkName = client.network_name().await?;
-  println!("NETWORK NAME {:?}", network_name);
   let (document, fragment): (IotaDocument, String) = create_did_document(&network_name, storage).await?;
 
   let alias_output: AliasOutput = client.new_did_output(address, document, None).await?;
@@ -186,13 +189,13 @@ pub fn random_stronghold_path() -> PathBuf {
 }
 
 pub fn write_to_csv(name: TestName, storage: StorageType, measures: VecDeque<Duration>){
-  let test_name = name.to_string().to_lowercase();
+  let test_name = &name.to_string().to_lowercase();
   create_dir_all(format!("results/{test_name}")).expect("Cannot create a directory");
   let mut csv = csv::WriterBuilder::new()
     .from_path(format!("results/{}/{}.csv", test_name, storage.to_string().to_ascii_lowercase())).expect("Cannot create file");
   measures
     .iter()
-    .map(|time| {BenchmarkMeasurement::new(TestName::Keygen, StorageType::Memstore, *time)})
+    .map(|time| {BenchmarkMeasurement::new(name.clone(), storage.clone(), *time)})
     .for_each(|record| { csv.write_record(&record.as_row()).unwrap();});
 }
 
@@ -222,9 +225,11 @@ impl BenchmarkMeasurement{
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum TestName{
-  Keygen
+  Keygen,
+  CreateDidDoc,
+  VcIssuance
 }
 
 impl Display for TestName{
@@ -233,7 +238,7 @@ impl Display for TestName{
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum StorageType{
   Memstore,
   Stronghold,

@@ -6,37 +6,36 @@ use std::time::Duration;
 use std::time::Instant;
 
 use examples::write_to_csv;
+use examples::MemStorage;
 use examples::StorageType;
 use examples::TestName;
-use identity_iota::storage::KeyType;
-use identity_iota::storage::JwkStorage;
-use identity_iota::verification::jws::JwsAlgorithm;
-use identity_storage_tpm::tpm_storage::TpmStorage;
-use tss_esapi::tcti_ldr::TabrmdConfig;
-use tss_esapi::Tcti;
+use identity_iota::iota::NetworkName;
+use identity_iota::storage::JwkMemStore;
+use identity_iota::storage::KeyIdMemstore;
+
 
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-
+    // Setup phase:
+    // Create a key storage
+    let storage = MemStorage::new(JwkMemStore::new(), KeyIdMemstore::new());
+    let network_name = NetworkName::try_from("str")?;
     let mut results = VecDeque::<Duration>::with_capacity(100);
 
     // Benchmark execution
     for _ in 0..100{
-      let tpm = tss_esapi::Context::new(Tcti::Tabrmd(TabrmdConfig::default()))?;
-      let storage = TpmStorage::new(tpm)?;
-
       let start = Instant::now();
       // code to measure
-      storage
-        .generate(KeyType::from_static_str("P-256"), JwsAlgorithm::ES256)
-        .await.unwrap();
+      examples::create_did_document(&network_name, &storage)
+        .await.expect("Cannot create did document");
 
       let elapsed = start.elapsed();
       results.push_front(elapsed);
     }
 
     // Benchmark completed: store results
-    write_to_csv(TestName::Keygen, StorageType::Tpm, results);
-  Ok(())
+    write_to_csv(TestName::CreateDidDoc, StorageType::Memstore, results);
+    Ok(())
 }
+

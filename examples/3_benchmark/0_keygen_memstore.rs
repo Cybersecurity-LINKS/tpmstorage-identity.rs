@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::VecDeque;
-use std::fs::create_dir_all;
 use std::time::Duration;
 use std::time::Instant;
 
 use examples::write_to_csv;
-use examples::BenchmarkMeasurement;
 use examples::StorageType;
 use examples::TestName;
 use identity_iota::storage::JwkMemStore;
