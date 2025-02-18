@@ -6,6 +6,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use examples::dtos::CredentialReponse;
+use examples::dtos::EncryptedCredentialResponse;
 use examples::random_stronghold_path;
 use examples::tpm_utils::TpmIdentityStorage;
 use examples::write_to_csv;
@@ -83,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
       .send()
       .await?
       .error_for_status()?
-      .json::<CredentialReponse>()
+      .json::<EncryptedCredentialResponse>()
       .await?;
     println!("{:?}",response);
     let elapsed = start.elapsed();

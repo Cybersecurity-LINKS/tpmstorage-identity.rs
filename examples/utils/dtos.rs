@@ -13,6 +13,8 @@ pub struct CredentialReponse {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EncryptedCredentialResponce {
-    pub vc_jwt: String
+pub struct EncryptedCredentialResponse {
+    pub id_object: String,
+    pub enc_secret: String,
+    pub enc_jwt: String
 }
