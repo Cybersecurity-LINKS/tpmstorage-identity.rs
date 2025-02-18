@@ -5,17 +5,17 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
+use examples::dtos::CredentialReponse;
 use examples::dtos::NonceResponse;
 use examples::random_stronghold_path;
+use examples::stronghold_utils::StrongholdKeyStorage;
 use examples::write_to_csv;
-use examples::MemStorage;
 use examples::StorageType;
 use examples::TestName;
 use examples::API_ENDPOINT;
 use identity_iota::storage::JwkDocumentExt;
-use identity_iota::storage::JwkMemStore;
 use identity_iota::storage::JwsSignatureOptions;
-use identity_iota::storage::KeyIdMemstore;
+use identity_stronghold::StrongholdStorage;
 use iota_sdk::client::secret::stronghold::StrongholdSecretManager;
 use iota_sdk::client::secret::SecretManager;
 use iota_sdk::client::Client;
@@ -40,10 +40,15 @@ async fn main() -> anyhow::Result<()> {
       .build(random_stronghold_path())?,
   );
   
-  let storage_holder = MemStorage::new(JwkMemStore::new(), KeyIdMemstore::new());
+  let stronghold_storage = StrongholdStorage::new(StrongholdSecretManager::builder()
+  .password(Password::from("secure_password_2".to_owned()))
+  .build(random_stronghold_path())?);
+
+  let storage_holder = StrongholdKeyStorage::new(stronghold_storage.clone(), stronghold_storage.clone());
+  // MemStorage::new(JwkMemStore::new(), KeyIdMemstore::new());
 
   // publish issuer and holder did document before vc issuance
-  let (_, document, fragment) = examples::create_did(&client, &mut secret_manager_holder, &storage_holder).await?;
+  let (_, document, fragment) = examples::stronghold_utils::create_did(&client, &mut secret_manager_holder, &storage_holder).await?;
   let did = document.id().to_string();
 
 
@@ -64,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
       .create_jws(&storage_holder, &fragment, nonce.as_bytes(), &options).await?;
     let signature = signature.as_str();
 
-    client.post("http://127.0.0.1:3213/api/credentials/iota")
+    let response = client.post("http://127.0.0.1:3213/api/credentials/iota")
       .json(&json!({
         "did": did,
         "nonce": nonce.clone(),
@@ -73,14 +78,14 @@ async fn main() -> anyhow::Result<()> {
       .send()
       .await?
       .error_for_status()?
-      .json()
+      .json::<CredentialReponse>()
       .await?;
-    
+    println!("{:?}",response);
     let elapsed = start.elapsed();
     results.push_front(elapsed);
   }
 
   // Benchmark completed: store results
-  write_to_csv(TestName::VcIssuance, StorageType::Memstore, results);
+  write_to_csv(TestName::VcIssuance, StorageType::Stronghold, results);
   Ok(())
 }

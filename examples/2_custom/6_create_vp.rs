@@ -8,7 +8,6 @@
 //! cargo run --release --example 6_create_vp
 
 use std::collections::HashMap;
-use std::io::Write;
 
 use examples::create_did;
 use examples::MemStorage;
