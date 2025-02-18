@@ -229,7 +229,8 @@ impl BenchmarkMeasurement{
 pub enum TestName{
   Keygen,
   CreateDidDoc,
-  VcIssuance
+  VcIssuance,
+  VcIssuanceComplete
 }
 
 impl Display for TestName{

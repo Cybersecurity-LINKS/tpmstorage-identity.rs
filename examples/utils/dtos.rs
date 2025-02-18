@@ -10,3 +10,9 @@ pub struct NonceResponse{
 pub struct CredentialReponse {
     pub vc_jwt: String
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncryptedCredentialResponce {
+    pub vc_jwt: String
+}
