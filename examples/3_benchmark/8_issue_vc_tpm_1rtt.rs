@@ -16,6 +16,7 @@ use examples::API_ENDPOINT;
 use identity_iota::storage::KeyIdMemstore;
 use identity_iota::storage::KeyIdStorage;
 use identity_iota::storage::MethodDigest;
+use identity_iota::verification::jwu::decode_b64;
 use identity_storage_tpm::tpm_storage::TpmStorage;
 use iota_sdk::client::secret::stronghold::StrongholdSecretManager;
 use iota_sdk::client::secret::SecretManager;
@@ -23,13 +24,13 @@ use iota_sdk::client::Client;
 use iota_sdk::client::Password;
 use reqwest::multipart;
 use reqwest::multipart::Part;
-use serde_json::json;
 use tss_esapi::tcti_ldr::TabrmdConfig;
 use tss_esapi::traits::Marshall;
 use tss_esapi::Tcti;
 
 
 const ISSUER_BASE_URL: &str = "http://127.0.0.1:3213/api";
+const EK_HANDLE: u32 = 0x81010001;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -87,6 +88,17 @@ async fn main() -> anyhow::Result<()> {
       .json::<EncryptedCredentialResponse>()
       .await?;
     println!("{:?}",response);
+
+    // retrieve secret with activate_credential
+    let id_obj = decode_b64(response.id_object)?;
+    let enc_sec = decode_b64(response.enc_secret)?;
+    let key = storage_holder
+      .key_storage()
+      .activate_credential(EK_HANDLE, 
+        holder_key_id,
+        &id_obj,
+        &enc_sec)?;
+    println!("key {:?}", key);
     let elapsed = start.elapsed();
     results.push_front(elapsed);
   }
