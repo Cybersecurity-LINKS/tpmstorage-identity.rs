@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
+use anyhow::anyhow;
 use examples::dtos::CredentialReponse;
 use examples::dtos::EncryptedCredentialResponse;
 use examples::random_stronghold_path;
@@ -22,6 +23,7 @@ use iota_sdk::client::secret::stronghold::StrongholdSecretManager;
 use iota_sdk::client::secret::SecretManager;
 use iota_sdk::client::Client;
 use iota_sdk::client::Password;
+use josekit::jwe::alg::direct::DirectJweAlgorithm::Dir;
 use reqwest::multipart;
 use reqwest::multipart::Part;
 use tss_esapi::tcti_ldr::TabrmdConfig;
@@ -98,7 +100,15 @@ async fn main() -> anyhow::Result<()> {
         holder_key_id,
         &id_obj,
         &enc_sec)?;
-    println!("key {:?}", key);
+    
+    let decrypter = Dir.decrypter_from_bytes(&key)?;
+    let (payload, _) = josekit::jwt::decode_with_decrypter(
+      response.enc_jwt,
+      &decrypter)?;
+    let vc_jwt = payload.claim("vc_jwt")
+      .ok_or(anyhow!("VC jwt not found"))?;
+    println!("{:?}", vc_jwt);
+    
     let elapsed = start.elapsed();
     results.push_front(elapsed);
   }
