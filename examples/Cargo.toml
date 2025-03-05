@@ -28,6 +28,7 @@ openssl = "0.10.69"
 csv = "1.3.1"
 serde.workspace = true
 reqwest = {version = "0.12.12", features = ["json", "multipart"]}
+josekit = "0.10.1"
 
 [lib]
 path = "utils/utils.rs"
@@ -120,6 +121,10 @@ path = "utils/utils.rs"
 ## Custom section 
 
 [[example]]
+path = "2_custom/0_create_did.rs"
+name = "0_create_did_tpm"
+
+[[example]]
 path = "2_custom/5_create_vc.rs"
 name = "5_create_vc_tpm"
 
@@ -163,3 +168,7 @@ name = "7_issue_vc_stronghold"
 [[example]]
 path = "3_benchmark/8_issue_vc_tpm_1rtt.rs"
 name = "8_issue_vc_tpm_1rtt"
+
+[[example]]
+path = "3_benchmark/8_issue_vc_tpm_2rtt.rs"
+name = "8_issue_vc_tpm_2rtt"

@@ -100,12 +100,7 @@ async fn main() -> anyhow::Result<()> {
         &id_obj,
         &enc_sec)?;
     
-    let decrypter = Dir.decrypter_from_bytes(&key)?;
-    let (payload, _) = josekit::jwt::decode_with_decrypter(
-      response.enc_jwt.unwrap(),
-      &decrypter)?;
-    let _vc_jwt = payload.claim("vc_jwt")
-      .ok_or(anyhow!("VC jwt not found"))?;
+    println!("{:?}", key);
     
     let elapsed = start.elapsed();
     results.push_front(elapsed);

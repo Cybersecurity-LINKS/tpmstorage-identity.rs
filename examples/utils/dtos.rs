@@ -16,5 +16,5 @@ pub struct CredentialReponse {
 pub struct EncryptedCredentialResponse {
     pub id_object: String,
     pub enc_secret: String,
-    pub enc_jwt: String
+    pub enc_jwt: Option<String>
 }

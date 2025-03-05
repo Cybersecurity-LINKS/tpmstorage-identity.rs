@@ -37,11 +37,14 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
-pub static API_ENDPOINT: &str = "https://api.testnet.shimmer.network";
-pub static FAUCET_ENDPOINT: &str = "https://faucet.testnet.shimmer.network/api/enqueue";
+//pub static API_ENDPOINT: &str = "https://api.testnet.shimmer.network";
+//pub static FAUCET_ENDPOINT: &str = "https://faucet.testnet.shimmer.network/api/enqueue";
 
-//pub static API_ENDPOINT: &str = "https://api.tangle.stardust.linksfoundation.com/";
-//pub static FAUCET_ENDPOINT: &str = "https://faucet.tangle.stardust.linksfoundation.com/api/enqueue";
+//pub static API_ENDPOINT: &str = "https://stardust.linksfoundation.com/node1";
+//pub static FAUCET_ENDPOINT: &str = "https://stardust.linksfoundation.com/faucet/l1/api/enqueue";
+
+pub static API_ENDPOINT: &str = "https://api.testnet.iotaledger.net";
+pub static FAUCET_ENDPOINT: &str = "https://faucet.testnet.iotaledger.net/api/enqueue";
 
 pub type MemStorage = Storage<JwkMemStore, KeyIdMemstore>;
 

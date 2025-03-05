@@ -3,7 +3,6 @@
 
 use examples::get_address_with_funds;
 use examples::random_stronghold_path;
-use examples::MemStorage;
 use examples::API_ENDPOINT;
 use examples::FAUCET_ENDPOINT;
 use identity_iota::iota::IotaClientExt;
@@ -13,14 +12,18 @@ use identity_iota::iota::NetworkName;
 use identity_iota::storage::JwkDocumentExt;
 use identity_iota::storage::JwkMemStore;
 use identity_iota::storage::KeyIdMemstore;
+use identity_iota::storage::KeyType;
 use identity_iota::verification::jws::JwsAlgorithm;
 use identity_iota::verification::MethodScope;
+use identity_storage_tpm::tpm_storage::TpmStorage;
 use iota_sdk::client::secret::stronghold::StrongholdSecretManager;
 use iota_sdk::client::secret::SecretManager;
 use iota_sdk::client::Client;
 use iota_sdk::client::Password;
 use iota_sdk::types::block::address::Address;
 use iota_sdk::types::block::output::AliasOutput;
+use tss_esapi::tcti_ldr::TabrmdConfig;
+use tss_esapi::Tcti;
 
 /// Demonstrates how to create a DID Document and publish it in a new Alias Output.
 ///
@@ -55,12 +58,17 @@ async fn main() -> anyhow::Result<()> {
   // The DID will be derived from the Alias Id of the Alias Output after publishing.
   let mut document: IotaDocument = IotaDocument::new(&network_name);
 
+  let tpm = tss_esapi::Context::new(Tcti::Tabrmd(TabrmdConfig::default()))?;
+  let storage = examples::tpm_utils::TpmIdentityStorage::new(
+    TpmStorage::new(tpm)?,
+    KeyIdMemstore::new());
+
   // Insert a new Ed25519 verification method in the DID document.
   document
     .generate_method(
       &storage,
-      JwkMemStore::ED25519_KEY_TYPE,
-      JwsAlgorithm::EdDSA,
+      KeyType::new("P-256"),
+      JwsAlgorithm::ES256,
       None,
       MethodScope::VerificationMethod,
     )
