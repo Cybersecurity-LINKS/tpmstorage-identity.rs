@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
       .part("tpm_key_pub", Part::bytes(public))
       .text("did", did.to_owned());
     
-    let response = client.post("http://127.0.0.1:3213/api/make_credential/complete")
+    let response = client.get("http://127.0.0.1:3213/api/make_credential/complete")
       .multipart(form)
       .send()
       .await?
